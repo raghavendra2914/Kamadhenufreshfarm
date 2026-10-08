@@ -964,7 +964,7 @@ elif main_menu == "Dashboard":
     
     # --- 1. ALERTS & INCIDENT PANEL ---
     st.subheader("🚨 System Alerts")
-    stock_df = pd.read_sql_query('SELECT p.name, COALESCE(SUM(i.qty_in), 0) - COALESCE(SUM(i.qty_out), 0) as current_stock FROM products p LEFT JOIN inventory_ledger i ON p.id = i.product_id GROUP BY p.name', conn)
+    stock_df = pd.read_sql_query('SELECT p.name, COALESCE(SUM(i.qty_in), 0) - COALESCE(SUM(i.qty_out), 0) as current_stock, p.default_price FROM products p LEFT JOIN inventory_ledger i ON p.id = i.product_id GROUP BY p.id, p.name', conn)
     low_stock = stock_df[stock_df['current_stock'] < 50]
     if not low_stock.empty:
         st.warning(f"**Low Stock Alert:** {', '.join(low_stock['name'].tolist())} inventory is running below optimal levels.")
@@ -978,12 +978,18 @@ elif main_menu == "Dashboard":
     total_received = pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM payments WHERE party_type='Client'", conn).iloc[0,0]
     total_paid = pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM payments WHERE party_type='Vendor'", conn).iloc[0,0]
     
+    pending_receivables = float(total_sales) - float(total_received)
+    pending_payables = float(total_purchases) - float(total_paid)
+    
+    total_sku_count = stock_df[stock_df['current_stock'] > 0]['current_stock'].sum()
+    stock_df['total_value'] = stock_df['current_stock'] * stock_df['default_price']
+    total_inventory_value = stock_df['total_value'].sum()
+    
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Revenue", f"₹{float(total_sales):,.2f}")
-    col2.metric("Total Cost", f"₹{float(total_purchases):,.2f}")
-    profit = float(total_sales) - float(total_purchases)
-    col3.metric("Gross Profit", f"₹{profit:,.2f}", delta=f"Margin: {(profit/float(total_sales)*100 if total_sales > 0 else 0):.1f}%")
-    col4.metric("Pending Receivables", f"₹{(float(total_sales) - float(total_received)):,.2f}")
+    col1.metric("Pending SKU (Inventory)", f"{total_sku_count:,.0f} Units")
+    col2.metric("Total Inventory Value", f"₹{total_inventory_value:,.2f}")
+    col3.metric("Pending Receivables (From Clients)", f"₹{pending_receivables:,.2f}")
+    col4.metric("Pending Payables (To Vendors)", f"₹{pending_payables:,.2f}")
 
     # --- 3. CHARTS (DONUT & BAR) ---
     c1, c2 = st.columns(2)
