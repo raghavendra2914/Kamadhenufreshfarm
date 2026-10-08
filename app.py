@@ -6,6 +6,7 @@ import datetime
 import platform
 import warnings
 import streamlit.components.v1 as components
+import plotly.express as px
 from database import init_db
 
 warnings.filterwarnings('ignore')
@@ -271,7 +272,7 @@ elif main_menu == "Purchase":
                 conn.commit()
                 st.success(f"Tracking quantities saved for {selected_po}!")
                 
-            # --- NEW INVOICE GENERATOR FOR PURCHASE (GRN BASED) ---
+            # --- PURCHASE (GRN BASED) INVOICE ---
             st.divider()
             st.subheader("🧾 Generate GRN Settlement Invoice")
             if st.button("🖨️ Preview & Print PO Invoice"):
@@ -453,7 +454,7 @@ elif main_menu == "Sales":
                 conn.commit()
                 st.success(f"Tracking quantities saved for {selected_so}!")
                 
-            # --- NEW INVOICE GENERATOR FOR SALES (CLIENT RECEIVED BASED) ---
+            # --- SALES (CLIENT RECEIVED BASED) INVOICE ---
             st.divider()
             st.subheader("🧾 Generate Professional Invoice")
             if st.button("🖨️ Preview & Print Invoice"):
@@ -720,25 +721,84 @@ elif main_menu == "Logistics":
 # 7. DASHBOARD & SYSTEM ADMIN
 # ==========================================
 elif main_menu == "Dashboard":
-    st.header("📊 Business Dashboard (P&L)")
+    st.header("📊 AI-Powered Business Dashboard")
+    st.markdown("""
+    **Welcome to your Command Center!** 
+    This module combines interactive 3D visualizations, analytical charts, and real-time tracking to give you a multidimensional view of your farm's performance.
+    """)
+    
     conn = get_db_connection()
+    
+    # --- 1. ALERTS & INCIDENT PANEL ---
+    st.subheader("🚨 System Alerts")
+    stock_df = pd.read_sql_query('SELECT p.name, COALESCE(SUM(i.qty_in), 0) - COALESCE(SUM(i.qty_out), 0) as current_stock FROM products p LEFT JOIN inventory_ledger i ON p.id = i.product_id GROUP BY p.name', conn)
+    low_stock = stock_df[stock_df['current_stock'] < 50]
+    if not low_stock.empty:
+        st.warning(f"**Low Stock Alert:** {', '.join(low_stock['name'].tolist())} inventory is running below optimal levels.")
+    else:
+        st.success("✅ All inventory levels are optimal. No active incidents.")
+
+    # --- 2. KPI CARDS ---
+    st.subheader("🎯 Key Performance Indicators")
     total_sales = pd.read_sql_query("SELECT COALESCE(SUM(total_amount), 0) FROM so_master", conn).iloc[0,0]
     total_purchases = pd.read_sql_query("SELECT COALESCE(SUM(total_amount), 0) FROM po_master", conn).iloc[0,0]
     total_received = pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM payments WHERE party_type='Client'", conn).iloc[0,0]
     total_paid = pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM payments WHERE party_type='Vendor'", conn).iloc[0,0]
-    st.subheader("Overall Business (Booked)")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Sales (Revenue)", f"Rs {float(total_sales):,.2f}")
-    col2.metric("Total Purchases (Cost)", f"Rs {float(total_purchases):,.2f}")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Revenue", f"₹{float(total_sales):,.2f}")
+    col2.metric("Total Cost", f"₹{float(total_purchases):,.2f}")
     profit = float(total_sales) - float(total_purchases)
-    col3.metric("Gross Profit (Booked)", f"Rs {profit:,.2f}", delta=f"Margin: {(profit/float(total_sales)*100 if total_sales > 0 else 0):.1f}%")
+    col3.metric("Gross Profit", f"₹{profit:,.2f}", delta=f"Margin: {(profit/float(total_sales)*100 if total_sales > 0 else 0):.1f}%")
+    col4.metric("Pending Receivables", f"₹{(float(total_sales) - float(total_received)):,.2f}")
+
+    # --- 3. CHARTS (DONUT & BAR) ---
+    c1, c2 = st.columns(2)
+    sales_by_client = pd.read_sql_query("SELECT c.name as Client, SUM(s.total_amount) as Total FROM so_master s JOIN clients c ON s.client_id = c.id GROUP BY c.name", conn)
+    if not sales_by_client.empty:
+        fig_donut = px.pie(sales_by_client, values='Total', names='Client', hole=0.4, title="Revenue Share by Client (Donut Chart)")
+        c1.plotly_chart(fig_donut, use_container_width=True)
+        
+    top_products = pd.read_sql_query("SELECT p.name as Product, SUM(i.qty) as Volume FROM so_items i JOIN products p ON i.product_id = p.id GROUP BY p.name ORDER BY Volume DESC LIMIT 5", conn)
+    if not top_products.empty:
+        fig_bar = px.bar(top_products, x='Product', y='Volume', title="Top Products by Volume (Bar Chart)", color='Product')
+        c2.plotly_chart(fig_bar, use_container_width=True)
+        
+    # --- 4. LINE CHART (TRENDS) & FUNNEL ---
+    c3, c4 = st.columns(2)
+    sales_trend = pd.read_sql_query("SELECT so_date as Date, SUM(total_amount) as Revenue FROM so_master GROUP BY so_date ORDER BY so_date", conn)
+    if not sales_trend.empty:
+        fig_line = px.line(sales_trend, x='Date', y='Revenue', markers=True, title="Revenue Timeline / Trends (Line Chart)")
+        c3.plotly_chart(fig_line, use_container_width=True)
+        
+    funnel_data = pd.DataFrame({
+        'Stage': ['Orders Placed', 'Dispatched', 'Payments Received'],
+        'Count': [
+            pd.read_sql_query("SELECT COUNT(*) FROM so_master", conn).iloc[0,0],
+            pd.read_sql_query("SELECT COUNT(*) FROM logistics WHERE order_ref LIKE 'SO%'", conn).iloc[0,0],
+            pd.read_sql_query("SELECT COUNT(DISTINCT order_no) FROM payments WHERE party_type='Client'", conn).iloc[0,0]
+        ]
+    })
+    if funnel_data['Count'].sum() > 0:
+        fig_funnel = px.funnel(funnel_data, x='Count', y='Stage', title="Sales Process Funnel")
+        c4.plotly_chart(fig_funnel, use_container_width=True)
+
+    # --- 5. 3D CUBE VISUALIZATION ---
     st.divider()
-    st.subheader("Cash Flow Tracker")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Cash Received", f"Rs {float(total_received):,.2f}")
-    c2.metric("Pending Receivables", f"Rs {(float(total_sales) - float(total_received)):,.2f}")
-    c3.metric("Cash Paid Out", f"Rs {float(total_paid):,.2f}")
-    c4.metric("Pending Payables", f"Rs {(float(total_purchases) - float(total_paid)):,.2f}")
+    st.subheader("🧊 3D Multidimensional Data Cube")
+    st.markdown("Rotate and zoom this interactive 3D model to analyze the relationship between Order Volume, Pricing, and Total Revenue across your products.")
+    cube_df = pd.read_sql_query("SELECT p.name as Product, p.category as Category, i.qty as Quantity, i.rate as Rate, i.total as Total FROM so_items i JOIN products p ON i.product_id = p.id", conn)
+    if not cube_df.empty and len(cube_df) > 0:
+        fig_3d = px.scatter_3d(cube_df, x='Quantity', y='Rate', z='Total', color='Category', hover_name='Product', size_max=18, title="3D Cube: Volume vs Pricing vs Revenue")
+        st.plotly_chart(fig_3d, use_container_width=True)
+    else:
+        st.info("Punch a few Sales Orders to render the interactive 3D Data Cube!")
+        
+    # --- 6. TIME SERIES TABLE ---
+    st.subheader("📅 Tabular Data Records")
+    if not sales_trend.empty:
+        st.dataframe(sales_trend, use_container_width=True, hide_index=True)
+    
     conn.close()
 
 elif main_menu == "System Info":
