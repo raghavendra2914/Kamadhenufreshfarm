@@ -15,6 +15,29 @@ init_db()
 
 def get_db_connection(): return psycopg2.connect(st.secrets["DATABASE_URL"])
 
+# Auto-update database tables dynamically for the new Master Data features
+try:
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("ALTER TABLE vendors ADD COLUMN IF NOT EXISTS bank_account VARCHAR(100);")
+    c.execute("ALTER TABLE vendors ADD COLUMN IF NOT EXISTS ifsc_code VARCHAR(50);")
+    c.execute("ALTER TABLE vendors ADD COLUMN IF NOT EXISTS passbook_file BYTEA;")
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS facilities (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(200),
+            location TEXT,
+            facility_type VARCHAR(100),
+            capacity NUMERIC,
+            incharge_name VARCHAR(100),
+            contact VARCHAR(50)
+        );
+    """)
+    conn.commit()
+    conn.close()
+except Exception as e:
+    pass
+
 st.set_page_config(page_title="Company ERP", layout="wide")
 
 # ==========================================
@@ -117,7 +140,8 @@ def show_data_with_delete(table_name, df, id_prefix):
 # 1. MASTER DATA 
 # ==========================================
 if main_menu == "Master Data":
-    sub_menu = st.sidebar.radio("Master Data Options", ["Vendor Onboarding", "Client Onboarding", "Product Master"])
+    sub_menu = st.sidebar.radio("Master Data Options", ["Vendor Onboarding", "Client Onboarding", "Product Master", "Facility Onboarding"])
+    
     if sub_menu == "Vendor Onboarding":
         st.header("Vendor Master")
         with st.form("vendor_form"):
@@ -128,18 +152,65 @@ if main_menu == "Master Data":
             v_pan = c2.text_input("PAN")
             v_address = st.text_area("Full Address")
             v_terms = st.text_input("Payment Terms")
+            
+            st.markdown("### 🏦 Secure Bank Details")
+            c3, c4 = st.columns(2)
+            bank_acc1 = c3.text_input("Account Number *", type="password", help="Enter the vendor's bank account number.")
+            bank_acc2 = c4.text_input("Confirm Account Number *", help="Re-enter to verify accuracy.")
+            v_ifsc = c3.text_input("IFSC Code *")
+            v_file = st.file_uploader("Upload Cancelled Cheque / Passbook Image", type=["pdf", "jpg", "jpeg", "png"])
+            
             if st.form_submit_button("Save Vendor"):
-                if v_name:
+                if not v_name or not bank_acc1 or not bank_acc2 or not v_ifsc:
+                    st.error("Please fill all mandatory (*) fields including Bank details.")
+                elif bank_acc1 != bank_acc2:
+                    st.error("Account Numbers do not match! Please check again.")
+                else:
+                    file_data = psycopg2.Binary(v_file.read()) if v_file else None
                     conn = get_db_connection()
                     c = conn.cursor()
-                    c.execute("INSERT INTO vendors (name, contact, address, gstin, pan, payment_terms) VALUES (%s, %s, %s, %s, %s, %s)", (str(v_name), str(v_contact), str(v_address), str(v_gstin), str(v_pan), str(v_terms)))
+                    c.execute("INSERT INTO vendors (name, contact, address, gstin, pan, payment_terms, bank_account, ifsc_code, passbook_file) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", 
+                              (str(v_name), str(v_contact), str(v_address), str(v_gstin), str(v_pan), str(v_terms), str(bank_acc1), str(v_ifsc), file_data))
                     conn.commit()
                     conn.close()
-                    st.success("Vendor saved!")
+                    st.success("Vendor and Bank details securely saved!")
+                    time.sleep(1.5)
                     st.rerun()
+                    
         st.subheader("Registered Vendors")
         conn = get_db_connection()
-        show_data_with_delete("vendors", pd.read_sql_query("SELECT id, name, contact, gstin FROM vendors", conn), "V")
+        show_data_with_delete("vendors", pd.read_sql_query("SELECT id, name, contact, gstin, bank_account as \"A/C No\" FROM vendors", conn), "V")
+        conn.close()
+        
+    elif sub_menu == "Facility Onboarding":
+        st.header("🏢 Facility Master")
+        with st.form("facility_form"):
+            c1, c2 = st.columns(2)
+            f_name = c1.text_input("Facility Name * (e.g. HSR Hub, Farm 1)")
+            f_type = c2.selectbox("Facility Type", ["Warehouse", "Processing Unit", "Cold Storage", "Retail Outlet", "Farm", "Other"])
+            f_loc = st.text_area("Full Location Address *")
+            f_capacity = c1.number_input("Capacity (Sq Ft / Metric Tons)", min_value=0.0)
+            f_incharge = c2.text_input("In-Charge Name")
+            f_contact = c1.text_input("Contact Number")
+            
+            if st.form_submit_button("Save Facility"):
+                if f_name and f_loc:
+                    conn = get_db_connection()
+                    c = conn.cursor()
+                    c.execute("INSERT INTO facilities (name, location, facility_type, capacity, incharge_name, contact) VALUES (%s, %s, %s, %s, %s, %s)", 
+                              (str(f_name), str(f_loc), str(f_type), float(f_capacity), str(f_incharge), str(f_contact)))
+                    conn.commit()
+                    conn.close()
+                    st.success("Facility securely saved!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Facility Name and Location are mandatory.")
+                    
+        st.subheader("Registered Facilities")
+        conn = get_db_connection()
+        fac_df = pd.read_sql_query('SELECT id, name as "Facility", facility_type as "Type", incharge_name as "Manager", location as "Address" FROM facilities', conn)
+        show_data_with_delete("facilities", fac_df, "FAC-")
         conn.close()
         
     elif sub_menu == "Client Onboarding":
@@ -386,6 +457,7 @@ elif main_menu == "Purchase":
                 </div>
                 """
                 components.html(invoice_html, height=850, scrolling=True)
+                
         conn.close()
 
     elif sub_menu == "View Purchase Orders":
