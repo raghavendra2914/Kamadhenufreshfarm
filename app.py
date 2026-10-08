@@ -5,6 +5,7 @@ import time
 import datetime
 import platform
 import warnings
+import streamlit.components.v1 as components
 from database import init_db
 
 warnings.filterwarnings('ignore')
@@ -346,8 +347,10 @@ elif main_menu == "Sales":
             selected_so = st.selectbox("Select Sales Order to Update", sos['so_number'].tolist())
             so_id = sos.loc[sos['so_number'] == selected_so, 'so_id'].values[0]
             st.write("✏️ **Double-click the numbers below to edit Dispatch Qty, Client Received Qty, and Rejected Qty:**")
+            
             items_query = f'SELECT item_id, p.name as "Product", qty as "Order_Qty", dispatch_qty as "Dispatch_Qty", received_qty as "Client_Received_Qty", rejected_qty as "Rejected_Qty" FROM so_items i JOIN products p ON i.product_id = p.id WHERE so_id = {so_id}'
             items_df = pd.read_sql_query(items_query, conn)
+            
             edited_so_df = st.data_editor(items_df, disabled=["item_id", "Product", "Order_Qty"], hide_index=True, use_container_width=True)
             if st.button("💾 Save Updates to SO"):
                 c = conn.cursor()
@@ -355,6 +358,96 @@ elif main_menu == "Sales":
                     c.execute("UPDATE so_items SET dispatch_qty = %s, received_qty = %s, rejected_qty = %s WHERE item_id = %s", (float(row['Dispatch_Qty']), float(row['Client_Received_Qty']), float(row['Rejected_Qty']), int(row['item_id'])))
                 conn.commit()
                 st.success(f"Tracking quantities saved for {selected_so}!")
+                
+            # --- NEW INVOICE GENERATOR ---
+            st.divider()
+            st.subheader("🧾 Generate Professional Invoice")
+            if st.button("🖨️ Preview & Print Invoice"):
+                c = conn.cursor()
+                c.execute("SELECT c.name, c.contact, c.gstin, s.so_date, s.total_amount FROM so_master s JOIN clients c ON s.client_id = c.id WHERE s.so_id = %s", (int(so_id),))
+                client_info = c.fetchone()
+                
+                c.execute(f"SELECT p.name, i.rate, i.qty FROM so_items i JOIN products p ON i.product_id = p.id WHERE i.so_id = {so_id}")
+                invoice_items = c.fetchall()
+                
+                items_html = ""
+                for idx, item in enumerate(invoice_items):
+                    item_total = float(item[1]) * float(item[2])
+                    items_html += f"<tr><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{idx+1}</td><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{item[0]}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{float(item[1]):.2f}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{item[2]}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{item_total:.2f}</td></tr>"
+                
+                invoice_html = f"""
+                <div style="font-family: Arial, sans-serif; max-width: 800px; margin: auto; padding: 40px; border: 1px solid #ddd; background-color: #fff; color: #000;">
+                    <h1 style="text-align: center; color: #444; margin-bottom: 5px; font-weight: normal; letter-spacing: 2px;">INVOICE</h1>
+                    <p style="text-align: center; color: #2e7d32; margin-top: 0; font-size: 18px;"><b>KAMADHENU FARM FRESH PRIVATE LIMITED</b></p>
+                    
+                    <div style="display: flex; justify-content: space-between; margin-top: 30px; font-size: 14px;">
+                        <div style="width: 50%;">
+                            <p style="margin: 0; line-height: 1.5;">
+                                Building No./Flat No.: 1697<br>
+                                Road/Street: 19th Main Road<br>
+                                Locality/Sub Locality: HSR Layout<br>
+                                Bengaluru, Karnataka, 560102<br>
+                                Mobile: +91 9206692624<br>
+                                Email: kamadhenufreshfarms@gmail.com
+                            </p>
+                        </div>
+                        <div style="width: 40%; text-align: left;">
+                            <p style="margin: 0; line-height: 1.5;">
+                                <b>Invoice #:</b> {selected_so}<br>
+                                <b>Invoice Date:</b> {client_info[3]}
+                            </p>
+                            <div style="margin-top: 15px;">
+                                <b>Customer Details:</b><br>
+                                {client_info[0]}<br>
+                                Ph: {client_info[1]}<br>
+                                GSTIN: {client_info[2]}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <table style="width: 100%; border-collapse: collapse; margin-top: 30px; font-size: 14px;">
+                        <thead>
+                            <tr style="background-color: #f2f2f2;">
+                                <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">#</th>
+                                <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Item</th>
+                                <th style="padding: 10px; border: 1px solid #ddd; text-align: right;">Rate / Item</th>
+                                <th style="padding: 10px; border: 1px solid #ddd; text-align: right;">Qty</th>
+                                <th style="padding: 10px; border: 1px solid #ddd; text-align: right;">Amount (₹)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {items_html}
+                        </tbody>
+                    </table>
+                    
+                    <h3 style="text-align: right; margin-top: 15px; color: #333;">Total Payable: ₹{float(client_info[4]):,.2f}</h3>
+                    
+                    <div style="display: flex; justify-content: space-between; margin-top: 40px; font-size: 14px;">
+                        <div style="line-height: 1.6;">
+                            <b style="color: #444;">Bank Details:</b><br>
+                            <b>Bank:</b> FEDERAL BANK<br>
+                            <b>Account Holder:</b> KAMADHENU FARM FRESH PRIVATE LIMITED<br>
+                            <b>Account #:</b> 25730200001058<br>
+                            <b>IFSC Code:</b> FDRL0002573
+                        </div>
+                        <div style="text-align: center;">
+                            <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=upi://pay?pa=25730200001058@FDRL0002573.ifsc.npci&pn=Kamadhenu&am={client_info[4]}" alt="QR Code">
+                            <div style="font-size: 11px; margin-top: 5px;">Scan to Pay via UPI</div>
+                        </div>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 40px;" class="no-print">
+                        <button onclick="window.print()" style="padding: 10px 20px; background-color: #2e7d32; color: white; border: none; cursor: pointer; border-radius: 4px; font-weight: bold; font-size: 16px;">🖨️ Print or Save as PDF</button>
+                        <style>
+                            @media print {
+                                .no-print { display: none !important; }
+                                body { -webkit-print-color-adjust: exact; }
+                            }
+                        </style>
+                    </div>
+                </div>
+                """
+                components.html(invoice_html, height=850, scrolling=True)
         conn.close()
 
 # ==========================================
