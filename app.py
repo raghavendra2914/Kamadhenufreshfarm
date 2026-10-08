@@ -261,35 +261,54 @@ elif main_menu == "Purchase":
             po_id = pos.loc[pos['po_number'] == selected_po, 'po_id'].values[0]
             st.write("✏️ **Double-click the numbers in 'Received_Qty' and 'GRN_Qty' below to edit them!**")
             
-            items_query = f'SELECT item_id, p.name as "Product", qty as "Indent_Qty", received_qty as "Received_Qty", grn_qty as "GRN_Qty" FROM po_items i JOIN products p ON i.product_id = p.id WHERE po_id = {po_id}'
+            # Using COALESCE to fallback to Indent_Qty if not updated yet
+            items_query = f'SELECT item_id, p.name as "Product", qty as "Indent_Qty", COALESCE(received_qty, qty) as "Received_Qty", COALESCE(grn_qty, qty) as "GRN_Qty" FROM po_items i JOIN products p ON i.product_id = p.id WHERE po_id = {po_id}'
             items_df = pd.read_sql_query(items_query, conn)
             
             edited_po_df = st.data_editor(items_df, disabled=["item_id", "Product", "Indent_Qty"], hide_index=True, use_container_width=True)
             if st.button("💾 Save Updates to PO"):
                 c = conn.cursor()
+                new_grand_total = 0.0
                 for index, row in edited_po_df.iterrows():
-                    c.execute("UPDATE po_items SET received_qty = %s, grn_qty = %s WHERE item_id = %s", (float(row['Received_Qty']), float(row['GRN_Qty']), int(row['item_id'])))
+                    item_id = int(row['item_id'])
+                    grn_qty = float(row['GRN_Qty'])
+                    
+                    c.execute("SELECT product_id, rate FROM po_items WHERE item_id = %s", (item_id,))
+                    prod_id, rate = c.fetchone()
+                    c.execute("SELECT tax_rate FROM products WHERE id = %s", (prod_id,))
+                    tax_rate = float(c.fetchone()[0])
+                    
+                    base_total = grn_qty * float(rate)
+                    gst_amount = base_total * (tax_rate / 100)
+                    item_total = base_total + gst_amount
+                    new_grand_total += item_total
+                    
+                    c.execute("UPDATE po_items SET received_qty = %s, grn_qty = %s, gst_amount = %s, total = %s WHERE item_id = %s", 
+                              (float(row['Received_Qty']), grn_qty, gst_amount, item_total, item_id))
+                              
+                    c.execute("UPDATE inventory_ledger SET qty_in = %s WHERE ref_type = 'Purchase' AND ref_id = %s AND product_id = %s", 
+                              (grn_qty, selected_po, prod_id))
+                              
+                c.execute("UPDATE po_master SET total_amount = %s WHERE po_id = %s", (new_grand_total, po_id))
                 conn.commit()
-                st.success(f"Tracking quantities saved for {selected_po}!")
+                st.success(f"Tracking quantities, inventory, and financials updated for {selected_po}!")
+                time.sleep(1)
+                st.rerun()
                 
             # --- PURCHASE (GRN BASED) INVOICE ---
             st.divider()
             st.subheader("🧾 Generate GRN Settlement Invoice")
             if st.button("🖨️ Preview & Print PO Invoice"):
                 c = conn.cursor()
-                c.execute("SELECT v.name, v.contact, v.gstin, p.po_date FROM po_master p JOIN vendors v ON p.vendor_id = v.id WHERE p.po_id = %s", (int(po_id),))
+                c.execute("SELECT v.name, v.contact, v.gstin, p.po_date, p.total_amount FROM po_master p JOIN vendors v ON p.vendor_id = v.id WHERE p.po_id = %s", (int(po_id),))
                 vendor_info = c.fetchone()
                 
-                c.execute(f"SELECT pr.name, i.rate, i.grn_qty FROM po_items i JOIN products pr ON i.product_id = pr.id WHERE i.po_id = {po_id}")
+                c.execute(f"SELECT pr.name, i.rate, COALESCE(i.grn_qty, i.qty), i.total FROM po_items i JOIN products pr ON i.product_id = pr.id WHERE i.po_id = {po_id}")
                 invoice_items = c.fetchall()
                 
                 items_html = ""
-                calculated_total = 0.0
                 for idx, item in enumerate(invoice_items):
-                    actual_qty = float(item[2]) if item[2] is not None else 0.0
-                    item_total = float(item[1]) * actual_qty
-                    calculated_total += item_total
-                    items_html += f"<tr><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{idx+1}</td><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{item[0]}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{float(item[1]):.2f}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{actual_qty}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{item_total:.2f}</td></tr>"
+                    items_html += f"<tr><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{idx+1}</td><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{item[0]}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{float(item[1]):.2f}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{float(item[2])}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{float(item[3]):.2f}</td></tr>"
                 
                 invoice_html = f"""
                 <div style="font-family: Arial, sans-serif; max-width: 800px; margin: auto; padding: 40px; border: 1px solid #ddd; background-color: #fff; color: #000;">
@@ -336,7 +355,7 @@ elif main_menu == "Purchase":
                         </tbody>
                     </table>
                     
-                    <h3 style="text-align: right; margin-top: 15px; color: #333;">Total Payable: ₹{calculated_total:,.2f}</h3>
+                    <h3 style="text-align: right; margin-top: 15px; color: #333;">Total Payable: ₹{float(vendor_info[4]):,.2f}</h3>
                     
                     <div style="display: flex; justify-content: space-between; margin-top: 40px; font-size: 14px;">
                         <div style="line-height: 1.6;">
@@ -347,7 +366,7 @@ elif main_menu == "Purchase":
                             <b>IFSC Code:</b> FDRL0002573
                         </div>
                         <div style="text-align: center;">
-                            <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=upi://pay?pa=25730200001058@FDRL0002573.ifsc.npci&pn=Kamadhenu&am={calculated_total}" alt="QR Code">
+                            <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=upi://pay?pa=25730200001058@FDRL0002573.ifsc.npci&pn=Kamadhenu&am={vendor_info[4]}" alt="QR Code">
                             <div style="font-size: 11px; margin-top: 5px;">Scan to Pay via UPI</div>
                         </div>
                     </div>
@@ -443,35 +462,53 @@ elif main_menu == "Sales":
             so_id = sos.loc[sos['so_number'] == selected_so, 'so_id'].values[0]
             st.write("✏️ **Double-click the numbers below to edit Dispatch Qty, Client Received Qty, and Rejected Qty:**")
             
-            items_query = f'SELECT item_id, p.name as "Product", qty as "Order_Qty", dispatch_qty as "Dispatch_Qty", received_qty as "Client_Received_Qty", rejected_qty as "Rejected_Qty" FROM so_items i JOIN products p ON i.product_id = p.id WHERE so_id = {so_id}'
+            items_query = f'SELECT item_id, p.name as "Product", qty as "Order_Qty", COALESCE(dispatch_qty, qty) as "Dispatch_Qty", COALESCE(received_qty, qty) as "Client_Received_Qty", COALESCE(rejected_qty, 0) as "Rejected_Qty" FROM so_items i JOIN products p ON i.product_id = p.id WHERE so_id = {so_id}'
             items_df = pd.read_sql_query(items_query, conn)
             
             edited_so_df = st.data_editor(items_df, disabled=["item_id", "Product", "Order_Qty"], hide_index=True, use_container_width=True)
             if st.button("💾 Save Updates to SO"):
                 c = conn.cursor()
+                new_grand_total = 0.0
                 for index, row in edited_so_df.iterrows():
-                    c.execute("UPDATE so_items SET dispatch_qty = %s, received_qty = %s, rejected_qty = %s WHERE item_id = %s", (float(row['Dispatch_Qty']), float(row['Client_Received_Qty']), float(row['Rejected_Qty']), int(row['item_id'])))
+                    item_id = int(row['item_id'])
+                    rec_qty = float(row['Client_Received_Qty'])
+                    
+                    c.execute("SELECT product_id, rate FROM so_items WHERE item_id = %s", (item_id,))
+                    prod_id, rate = c.fetchone()
+                    c.execute("SELECT tax_rate FROM products WHERE id = %s", (prod_id,))
+                    tax_rate = float(c.fetchone()[0])
+                    
+                    base_total = rec_qty * float(rate)
+                    gst_amount = base_total * (tax_rate / 100)
+                    item_total = base_total + gst_amount
+                    new_grand_total += item_total
+                    
+                    c.execute("UPDATE so_items SET dispatch_qty = %s, received_qty = %s, rejected_qty = %s, gst_amount = %s, total = %s WHERE item_id = %s", 
+                              (float(row['Dispatch_Qty']), rec_qty, float(row['Rejected_Qty']), gst_amount, item_total, item_id))
+                              
+                    c.execute("UPDATE inventory_ledger SET qty_out = %s WHERE ref_type = 'Sale' AND ref_id = %s AND product_id = %s", 
+                              (rec_qty, selected_so, prod_id))
+                              
+                c.execute("UPDATE so_master SET total_amount = %s WHERE so_id = %s", (new_grand_total, so_id))
                 conn.commit()
-                st.success(f"Tracking quantities saved for {selected_so}!")
+                st.success(f"Tracking quantities, inventory, and financials updated for {selected_so}!")
+                time.sleep(1)
+                st.rerun()
                 
             # --- SALES (CLIENT RECEIVED BASED) INVOICE ---
             st.divider()
             st.subheader("🧾 Generate Professional Invoice")
             if st.button("🖨️ Preview & Print Invoice"):
                 c = conn.cursor()
-                c.execute("SELECT c.name, c.contact, c.gstin, s.so_date FROM so_master s JOIN clients c ON s.client_id = c.id WHERE s.so_id = %s", (int(so_id),))
+                c.execute("SELECT c.name, c.contact, c.gstin, s.so_date, s.total_amount FROM so_master s JOIN clients c ON s.client_id = c.id WHERE s.so_id = %s", (int(so_id),))
                 client_info = c.fetchone()
                 
-                c.execute(f"SELECT p.name, i.rate, i.received_qty FROM so_items i JOIN products p ON i.product_id = p.id WHERE i.so_id = {so_id}")
+                c.execute(f"SELECT p.name, i.rate, COALESCE(i.received_qty, i.qty), i.total FROM so_items i JOIN products p ON i.product_id = p.id WHERE i.so_id = {so_id}")
                 invoice_items = c.fetchall()
                 
                 items_html = ""
-                calculated_total = 0.0
                 for idx, item in enumerate(invoice_items):
-                    actual_qty = float(item[2]) if item[2] is not None else 0.0
-                    item_total = float(item[1]) * actual_qty
-                    calculated_total += item_total
-                    items_html += f"<tr><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{idx+1}</td><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{item[0]}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{float(item[1]):.2f}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{actual_qty}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{item_total:.2f}</td></tr>"
+                    items_html += f"<tr><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{idx+1}</td><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{item[0]}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{float(item[1]):.2f}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{float(item[2])}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{float(item[3]):.2f}</td></tr>"
                 
                 invoice_html = f"""
                 <div style="font-family: Arial, sans-serif; max-width: 800px; margin: auto; padding: 40px; border: 1px solid #ddd; background-color: #fff; color: #000;">
@@ -518,7 +555,7 @@ elif main_menu == "Sales":
                         </tbody>
                     </table>
                     
-                    <h3 style="text-align: right; margin-top: 15px; color: #333;">Total Payable: ₹{calculated_total:,.2f}</h3>
+                    <h3 style="text-align: right; margin-top: 15px; color: #333;">Total Payable: ₹{float(client_info[4]):,.2f}</h3>
                     
                     <div style="display: flex; justify-content: space-between; margin-top: 40px; font-size: 14px;">
                         <div style="line-height: 1.6;">
@@ -529,7 +566,7 @@ elif main_menu == "Sales":
                             <b>IFSC Code:</b> FDRL0002573
                         </div>
                         <div style="text-align: center;">
-                            <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=upi://pay?pa=25730200001058@FDRL0002573.ifsc.npci&pn=Kamadhenu&am={calculated_total}" alt="QR Code">
+                            <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=upi://pay?pa=25730200001058@FDRL0002573.ifsc.npci&pn=Kamadhenu&am={client_info[4]}" alt="QR Code">
                             <div style="font-size: 11px; margin-top: 5px;">Scan to Pay via UPI</div>
                         </div>
                     </div>
