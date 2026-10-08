@@ -754,19 +754,19 @@ elif main_menu == "Dashboard":
 
     # --- 3. CHARTS (DONUT & BAR) ---
     c1, c2 = st.columns(2)
-    sales_by_client = pd.read_sql_query("SELECT c.name as Client, SUM(s.total_amount) as Total FROM so_master s JOIN clients c ON s.client_id = c.id GROUP BY c.name", conn)
+    sales_by_client = pd.read_sql_query('SELECT c.name as "Client", SUM(s.total_amount) as "Total" FROM so_master s JOIN clients c ON s.client_id = c.id GROUP BY c.name', conn)
     if not sales_by_client.empty:
         fig_donut = px.pie(sales_by_client, values='Total', names='Client', hole=0.4, title="Revenue Share by Client (Donut Chart)")
         c1.plotly_chart(fig_donut, use_container_width=True)
         
-    top_products = pd.read_sql_query("SELECT p.name as Product, SUM(i.qty) as Volume FROM so_items i JOIN products p ON i.product_id = p.id GROUP BY p.name ORDER BY Volume DESC LIMIT 5", conn)
+    top_products = pd.read_sql_query('SELECT p.name as "Product", SUM(i.qty) as "Volume" FROM so_items i JOIN products p ON i.product_id = p.id GROUP BY p.name ORDER BY "Volume" DESC LIMIT 5', conn)
     if not top_products.empty:
         fig_bar = px.bar(top_products, x='Product', y='Volume', title="Top Products by Volume (Bar Chart)", color='Product')
         c2.plotly_chart(fig_bar, use_container_width=True)
         
     # --- 4. LINE CHART (TRENDS) & FUNNEL ---
     c3, c4 = st.columns(2)
-    sales_trend = pd.read_sql_query("SELECT so_date as Date, SUM(total_amount) as Revenue FROM so_master GROUP BY so_date ORDER BY so_date", conn)
+    sales_trend = pd.read_sql_query('SELECT so_date as "Date", SUM(total_amount) as "Revenue" FROM so_master GROUP BY so_date ORDER BY so_date', conn)
     if not sales_trend.empty:
         fig_line = px.line(sales_trend, x='Date', y='Revenue', markers=True, title="Revenue Timeline / Trends (Line Chart)")
         c3.plotly_chart(fig_line, use_container_width=True)
@@ -787,7 +787,7 @@ elif main_menu == "Dashboard":
     st.divider()
     st.subheader("🧊 3D Multidimensional Data Cube")
     st.markdown("Rotate and zoom this interactive 3D model to analyze the relationship between Order Volume, Pricing, and Total Revenue across your products.")
-    cube_df = pd.read_sql_query("SELECT p.name as Product, p.category as Category, i.qty as Quantity, i.rate as Rate, i.total as Total FROM so_items i JOIN products p ON i.product_id = p.id", conn)
+    cube_df = pd.read_sql_query('SELECT p.name as "Product", p.category as "Category", i.qty as "Quantity", i.rate as "Rate", i.total as "Total" FROM so_items i JOIN products p ON i.product_id = p.id', conn)
     if not cube_df.empty and len(cube_df) > 0:
         fig_3d = px.scatter_3d(cube_df, x='Quantity', y='Rate', z='Total', color='Category', hover_name='Product', size_max=18, title="3D Cube: Volume vs Pricing vs Revenue")
         st.plotly_chart(fig_3d, use_container_width=True)
