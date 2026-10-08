@@ -464,7 +464,6 @@ elif main_menu == "Purchase":
         st.header("📋 View & Export Purchase Orders")
         conn = get_db_connection()
         
-        # --- FILTERS ---
         col1, col2, col3 = st.columns(3)
         start_date = col1.date_input("Start Date", datetime.date.today() - datetime.timedelta(days=30))
         end_date = col2.date_input("End Date", datetime.date.today())
@@ -473,7 +472,6 @@ elif main_menu == "Purchase":
         vendor_list = ["All Vendors"] + vendors_df['name'].tolist()
         selected_vendor = col3.selectbox("Filter by Vendor", vendor_list)
         
-        # --- BUILD QUERY ---
         query = f"SELECT p.po_number as \"PO Number\", p.po_date as \"Date\", v.name as \"Vendor\", p.total_amount as \"Total (Rs)\", p.status as \"Status\" FROM po_master p JOIN vendors v ON p.vendor_id = v.id WHERE p.po_date BETWEEN %s AND %s"
         params = [str(start_date), str(end_date)]
         
@@ -490,7 +488,6 @@ elif main_menu == "Purchase":
         else:
             st.dataframe(po_df, use_container_width=True, hide_index=True)
             
-            # --- CSV DOWNLOAD BUTTON ---
             csv = po_df.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Download List as CSV",
@@ -500,7 +497,6 @@ elif main_menu == "Purchase":
                 type="primary"
             )
             
-            # --- DRILL DOWN / VIEW DETAILS ---
             st.divider()
             st.subheader("🔍 View PO Detailed Items")
             selected_po_view = st.selectbox("Select a PO Number to view inside details", po_df["PO Number"].tolist())
@@ -726,7 +722,6 @@ elif main_menu == "Sales":
         st.header("📋 View & Export Sales Orders")
         conn = get_db_connection()
         
-        # --- FILTERS ---
         col1, col2, col3 = st.columns(3)
         start_date = col1.date_input("Start Date", datetime.date.today() - datetime.timedelta(days=30))
         end_date = col2.date_input("End Date", datetime.date.today())
@@ -735,7 +730,6 @@ elif main_menu == "Sales":
         client_list = ["All Clients"] + clients_df['name'].tolist()
         selected_client = col3.selectbox("Filter by Client", client_list)
         
-        # --- BUILD QUERY ---
         query = f"SELECT s.so_number as \"SO Number\", s.so_date as \"Date\", c.name as \"Client\", s.total_amount as \"Total (Rs)\", s.status as \"Status\" FROM so_master s JOIN clients c ON s.client_id = c.id WHERE s.so_date BETWEEN %s AND %s"
         params = [str(start_date), str(end_date)]
         
@@ -752,7 +746,6 @@ elif main_menu == "Sales":
         else:
             st.dataframe(so_df, use_container_width=True, hide_index=True)
             
-            # --- CSV DOWNLOAD BUTTON ---
             csv = so_df.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Download List as CSV",
@@ -762,7 +755,6 @@ elif main_menu == "Sales":
                 type="primary"
             )
             
-            # --- DRILL DOWN / VIEW DETAILS ---
             st.divider()
             st.subheader("🔍 View SO Detailed Items")
             selected_so_view = st.selectbox("Select a SO Number to view inside details", so_df["SO Number"].tolist())
@@ -964,15 +956,14 @@ elif main_menu == "Dashboard":
     
     # --- 1. ALERTS & INCIDENT PANEL ---
     st.subheader("🚨 System Alerts")
-    stock_df = pd.read_sql_query('SELECT p.name, COALESCE(SUM(i.qty_in), 0) - COALESCE(SUM(i.qty_out), 0) as current_stock, p.default_price FROM products p LEFT JOIN inventory_ledger i ON p.id = i.product_id GROUP BY p.id, p.name', conn)
+    stock_df = pd.read_sql_query('SELECT p.id as product_id, p.name, COALESCE(SUM(i.qty_in), 0) - COALESCE(SUM(i.qty_out), 0) as current_stock, p.default_price FROM products p LEFT JOIN inventory_ledger i ON p.id = i.product_id GROUP BY p.id, p.name, p.default_price', conn)
     low_stock = stock_df[stock_df['current_stock'] < 50]
     if not low_stock.empty:
         st.warning(f"**Low Stock Alert:** {', '.join(low_stock['name'].tolist())} inventory is running below optimal levels.")
     else:
         st.success("✅ All inventory levels are optimal. No active incidents.")
 
-    # --- 2. KPI CARDS ---
-    st.subheader("🎯 Key Performance Indicators")
+    # --- DATA CALCULATION FOR KPIs ---
     total_sales = pd.read_sql_query("SELECT COALESCE(SUM(total_amount), 0) FROM so_master", conn).iloc[0,0]
     total_purchases = pd.read_sql_query("SELECT COALESCE(SUM(total_amount), 0) FROM po_master", conn).iloc[0,0]
     total_received = pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM payments WHERE party_type='Client'", conn).iloc[0,0]
@@ -985,13 +976,89 @@ elif main_menu == "Dashboard":
     stock_df['total_value'] = stock_df['current_stock'] * stock_df['default_price']
     total_inventory_value = stock_df['total_value'].sum()
     
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Pending SKU (Inventory)", f"{total_sku_count:,.0f} Units")
-    col2.metric("Total Inventory Value", f"₹{total_inventory_value:,.2f}")
-    col3.metric("Pending Receivables (From Clients)", f"₹{pending_receivables:,.2f}")
-    col4.metric("Pending Payables (To Vendors)", f"₹{pending_payables:,.2f}")
+    overall_pl = float(total_sales) - float(total_purchases)
+    overall_margin = (overall_pl / float(total_sales) * 100) if total_sales > 0 else 0.0
 
-    # --- 3. CHARTS (DONUT & BAR) ---
+    # SKU Wise P&L Calculation
+    sku_pl_query = """
+        SELECT 
+            p.name as "Product",
+            COALESCE(s.rev, 0) as "Total Revenue",
+            COALESCE(po.cost, 0) as "Total Cost"
+        FROM products p
+        LEFT JOIN (SELECT product_id, SUM(total) as rev FROM so_items GROUP BY product_id) s ON p.id = s.product_id
+        LEFT JOIN (SELECT product_id, SUM(total) as cost FROM po_items GROUP BY product_id) po ON p.id = po.product_id
+        WHERE COALESCE(s.rev, 0) > 0 OR COALESCE(po.cost, 0) > 0
+    """
+    sku_pl_df = pd.read_sql_query(sku_pl_query, conn)
+    sku_pl_df["P&L"] = sku_pl_df["Total Revenue"] - sku_pl_df["Total Cost"]
+    
+    profit_skus = len(sku_pl_df[sku_pl_df["P&L"] > 0])
+    loss_skus = len(sku_pl_df[sku_pl_df["P&L"] < 0])
+
+    # Client Wise P&L Calculation (Client Revenue vs COGS calculated from average purchase rates)
+    client_pl_query = """
+        WITH avg_cost AS (
+            SELECT product_id, CASE WHEN SUM(grn_qty) > 0 THEN SUM(total)/SUM(grn_qty) ELSE 0 END as cost_per_unit
+            FROM po_items GROUP BY product_id
+        ),
+        client_item_costs AS (
+            SELECT s.client_id, SUM(i.received_qty * COALESCE(ac.cost_per_unit, 0)) as total_cogs
+            FROM so_items i
+            JOIN so_master s ON i.so_id = s.so_id
+            LEFT JOIN avg_cost ac ON i.product_id = ac.product_id
+            GROUP BY s.client_id
+        ),
+        client_revenues AS (
+            SELECT client_id, SUM(total_amount) as total_rev
+            FROM so_master
+            GROUP BY client_id
+        )
+        SELECT 
+            c.name as "Client", 
+            COALESCE(cr.total_rev, 0) as "Total Revenue", 
+            COALESCE(cic.total_cogs, 0) as "Total Cost"
+        FROM clients c
+        JOIN client_revenues cr ON c.id = cr.client_id
+        LEFT JOIN client_item_costs cic ON c.id = cic.client_id
+    """
+    try:
+        client_pl_df = pd.read_sql_query(client_pl_query, conn)
+        client_pl_df["P&L"] = client_pl_df["Total Revenue"] - client_pl_df["Total Cost"]
+    except:
+        client_pl_df = pd.read_sql_query('SELECT c.name as "Client", SUM(s.total_amount) as "Total Revenue", 0 as "Total Cost", SUM(s.total_amount) as "P&L" FROM so_master s JOIN clients c ON s.client_id = c.id GROUP BY c.name', conn)
+
+    # --- 2. KPI CARDS ---
+    st.subheader("🎯 Key Performance Indicators")
+    
+    # ROW 1
+    r1c1, r1c2, r1c3, r1c4 = st.columns(4)
+    r1c1.metric("Total Revenue", f"₹{float(total_sales):,.2f}")
+    r1c2.metric("Total Cost", f"₹{float(total_purchases):,.2f}")
+    r1c3.metric("Overall P&L", f"₹{overall_pl:,.2f}", delta=f"Margin: {overall_margin:.1f}%")
+    r1c4.metric("Pending SKU (Inventory)", f"{total_sku_count:,.0f} Units")
+
+    # ROW 2
+    st.write("") # Spacing
+    r2c1, r2c2, r2c3, r2c4 = st.columns(4)
+    r2c1.metric("Total Inventory Value", f"₹{total_inventory_value:,.2f}")
+    r2c2.metric("Pending Receivables (From Clients)", f"₹{pending_receivables:,.2f}")
+    r2c3.metric("Pending Payables (To Vendors)", f"₹{pending_payables:,.2f}")
+    r2c4.metric("SKU Performance Tracker", f"{profit_skus} Profit | {loss_skus} Loss")
+    
+    # --- 3. P&L TABLES ---
+    st.divider()
+    st.subheader("📊 Profit & Loss Breakdown")
+    tab1, tab2 = st.tabs(["SKU-Wise P&L", "Client-Wise P&L"])
+    
+    with tab1:
+        st.dataframe(sku_pl_df.style.format({"Total Revenue": "₹{:,.2f}", "Total Cost": "₹{:,.2f}", "P&L": "₹{:,.2f}"}), use_container_width=True, hide_index=True)
+        
+    with tab2:
+        st.dataframe(client_pl_df.style.format({"Total Revenue": "₹{:,.2f}", "Total Cost": "₹{:,.2f}", "P&L": "₹{:,.2f}"}), use_container_width=True, hide_index=True)
+
+    # --- 4. CHARTS (DONUT & BAR) ---
+    st.divider()
     c1, c2 = st.columns(2)
     sales_by_client = pd.read_sql_query('SELECT c.name as "Client", SUM(s.total_amount) as "Total" FROM so_master s JOIN clients c ON s.client_id = c.id GROUP BY c.name', conn)
     if not sales_by_client.empty:
@@ -1003,7 +1070,7 @@ elif main_menu == "Dashboard":
         fig_bar = px.bar(top_products, x='Product', y='Volume', title="Top Products by Volume (Bar Chart)", color='Product')
         c2.plotly_chart(fig_bar, use_container_width=True)
         
-    # --- 4. LINE CHART (TRENDS) & FUNNEL ---
+    # --- 5. LINE CHART (TRENDS) & FUNNEL ---
     c3, c4 = st.columns(2)
     sales_trend = pd.read_sql_query('SELECT so_date as "Date", SUM(total_amount) as "Revenue" FROM so_master GROUP BY so_date ORDER BY so_date', conn)
     if not sales_trend.empty:
@@ -1022,7 +1089,7 @@ elif main_menu == "Dashboard":
         fig_funnel = px.funnel(funnel_data, x='Count', y='Stage', title="Sales Process Funnel")
         c4.plotly_chart(fig_funnel, use_container_width=True)
 
-    # --- 5. 3D CUBE VISUALIZATION ---
+    # --- 6. 3D CUBE VISUALIZATION ---
     st.divider()
     st.subheader("🧊 3D Multidimensional Data Cube")
     st.markdown("Rotate and zoom this interactive 3D model to analyze the relationship between Order Volume, Pricing, and Total Revenue across your products.")
@@ -1032,11 +1099,6 @@ elif main_menu == "Dashboard":
         st.plotly_chart(fig_3d, use_container_width=True)
     else:
         st.info("Punch a few Sales Orders to render the interactive 3D Data Cube!")
-        
-    # --- 6. TIME SERIES TABLE ---
-    st.subheader("📅 Tabular Data Records")
-    if not sales_trend.empty:
-        st.dataframe(sales_trend, use_container_width=True, hide_index=True)
     
     conn.close()
 
