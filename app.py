@@ -24,7 +24,24 @@ if 'logged_in' not in st.session_state:
     st.session_state.user_role = ""
 
 if not st.session_state.logged_in:
-    st.title("🔐 Company ERP Login")
+    # Custom CSS for a smooth pulsing animation on the title
+    st.markdown("""
+        <style>
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.02); color: #2e7d32; }
+            100% { transform: scale(1); }
+        }
+        .animated-title {
+            text-align: center;
+            font-family: 'Arial Black', sans-serif;
+            animation: pulse 3s infinite;
+        }
+        </style>
+        <h1 class="animated-title">🌱 Kamadhenufreshfarm ERP</h1>
+        <br>
+    """, unsafe_allow_html=True)
+    
     with st.form("login_form"):
         email = st.text_input("Domain Email ID")
         password = st.text_input("Password", type="password")
@@ -39,6 +56,8 @@ if not st.session_state.logged_in:
                 st.session_state.logged_in = True
                 st.session_state.user_email = email
                 st.session_state.user_role = result[0]
+                st.balloons()  # Triggers a full-screen animation on login!
+                time.sleep(1.5) 
                 st.rerun()
             else:
                 st.error("Invalid Email or Password. Please try again.")
