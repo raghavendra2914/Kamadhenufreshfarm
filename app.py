@@ -25,7 +25,6 @@ if 'logged_in' not in st.session_state:
     st.session_state.user_role = ""
 
 if not st.session_state.logged_in:
-    # Custom CSS for a smooth pulsing animation on the title
     st.markdown("""
         <style>
         @keyframes pulse {
@@ -57,7 +56,7 @@ if not st.session_state.logged_in:
                 st.session_state.logged_in = True
                 st.session_state.user_email = email
                 st.session_state.user_role = result[0]
-                st.balloons()  # Triggers a full-screen animation on login!
+                st.balloons()  
                 time.sleep(1.5) 
                 st.rerun()
             else:
@@ -241,7 +240,6 @@ elif main_menu == "Purchase":
                     new_po_id = int(c.fetchone()[0])
                     
                     for item in st.session_state.po_cart:
-                        # EVERYTHING FORCED TO STANDARD PYTHON TYPES FOR POSTGRES
                         c.execute("INSERT INTO po_items (po_id, product_id, qty, rate, gst_amount, total) VALUES (%s, %s, %s, %s, %s, %s)", 
                                   (new_po_id, int(item['prod_id']), float(item['Indent Qty']), float(item['Rate']), float(item['GST Rs']), float(item['Total Rs'])))
                         c.execute("INSERT INTO inventory_ledger (product_id, batch_no, qty_in, qty_out, ref_type, ref_id, txn_date) VALUES (%s, %s, %s, 0, 'Purchase', %s, %s)", 
@@ -261,8 +259,10 @@ elif main_menu == "Purchase":
             selected_po = st.selectbox("Select Purchase Order to Update", pos['po_number'].tolist())
             po_id = pos.loc[pos['po_number'] == selected_po, 'po_id'].values[0]
             st.write("✏️ **Double-click the numbers in 'Received_Qty' and 'GRN_Qty' below to edit them!**")
+            
             items_query = f'SELECT item_id, p.name as "Product", qty as "Indent_Qty", received_qty as "Received_Qty", grn_qty as "GRN_Qty" FROM po_items i JOIN products p ON i.product_id = p.id WHERE po_id = {po_id}'
             items_df = pd.read_sql_query(items_query, conn)
+            
             edited_po_df = st.data_editor(items_df, disabled=["item_id", "Product", "Indent_Qty"], hide_index=True, use_container_width=True)
             if st.button("💾 Save Updates to PO"):
                 c = conn.cursor()
@@ -270,6 +270,100 @@ elif main_menu == "Purchase":
                     c.execute("UPDATE po_items SET received_qty = %s, grn_qty = %s WHERE item_id = %s", (float(row['Received_Qty']), float(row['GRN_Qty']), int(row['item_id'])))
                 conn.commit()
                 st.success(f"Tracking quantities saved for {selected_po}!")
+                
+            # --- NEW INVOICE GENERATOR FOR PURCHASE (GRN BASED) ---
+            st.divider()
+            st.subheader("🧾 Generate GRN Settlement Invoice")
+            if st.button("🖨️ Preview & Print PO Invoice"):
+                c = conn.cursor()
+                c.execute("SELECT v.name, v.contact, v.gstin, p.po_date FROM po_master p JOIN vendors v ON p.vendor_id = v.id WHERE p.po_id = %s", (int(po_id),))
+                vendor_info = c.fetchone()
+                
+                c.execute(f"SELECT pr.name, i.rate, i.grn_qty FROM po_items i JOIN products pr ON i.product_id = pr.id WHERE i.po_id = {po_id}")
+                invoice_items = c.fetchall()
+                
+                items_html = ""
+                calculated_total = 0.0
+                for idx, item in enumerate(invoice_items):
+                    actual_qty = float(item[2]) if item[2] is not None else 0.0
+                    item_total = float(item[1]) * actual_qty
+                    calculated_total += item_total
+                    items_html += f"<tr><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{idx+1}</td><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{item[0]}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{float(item[1]):.2f}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{actual_qty}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{item_total:.2f}</td></tr>"
+                
+                invoice_html = f"""
+                <div style="font-family: Arial, sans-serif; max-width: 800px; margin: auto; padding: 40px; border: 1px solid #ddd; background-color: #fff; color: #000;">
+                    <h1 style="text-align: center; color: #444; margin-bottom: 5px; font-weight: normal; letter-spacing: 2px;">PURCHASE / GRN INVOICE</h1>
+                    <p style="text-align: center; color: #2e7d32; margin-top: 0; font-size: 18px;"><b>KAMADHENU FARM FRESH PRIVATE LIMITED</b></p>
+                    
+                    <div style="display: flex; justify-content: space-between; margin-top: 30px; font-size: 14px;">
+                        <div style="width: 50%;">
+                            <p style="margin: 0; line-height: 1.5;">
+                                Building No./Flat No.: 1697<br>
+                                Road/Street: 19th Main Road<br>
+                                Locality/Sub Locality: HSR Layout<br>
+                                Bengaluru, Karnataka, 560102<br>
+                                Mobile: +91 9206692624<br>
+                                Email: kamadhenufreshfarms@gmail.com
+                            </p>
+                        </div>
+                        <div style="width: 40%; text-align: left;">
+                            <p style="margin: 0; line-height: 1.5;">
+                                <b>Order #:</b> {selected_po}<br>
+                                <b>Order Date:</b> {vendor_info[3]}
+                            </p>
+                            <div style="margin-top: 15px;">
+                                <b>Vendor Details:</b><br>
+                                {vendor_info[0]}<br>
+                                Ph: {vendor_info[1]}<br>
+                                GSTIN: {vendor_info[2]}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <table style="width: 100%; border-collapse: collapse; margin-top: 30px; font-size: 14px;">
+                        <thead>
+                            <tr style="background-color: #f2f2f2;">
+                                <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">#</th>
+                                <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Item</th>
+                                <th style="padding: 10px; border: 1px solid #ddd; text-align: right;">Rate / Item</th>
+                                <th style="padding: 10px; border: 1px solid #ddd; text-align: right;">GRN Qty</th>
+                                <th style="padding: 10px; border: 1px solid #ddd; text-align: right;">Amount (₹)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {items_html}
+                        </tbody>
+                    </table>
+                    
+                    <h3 style="text-align: right; margin-top: 15px; color: #333;">Total Payable: ₹{calculated_total:,.2f}</h3>
+                    
+                    <div style="display: flex; justify-content: space-between; margin-top: 40px; font-size: 14px;">
+                        <div style="line-height: 1.6;">
+                            <b style="color: #444;">Bank Details:</b><br>
+                            <b>Bank:</b> FEDERAL BANK<br>
+                            <b>Account Holder:</b> KAMADHENU FARM FRESH PRIVATE LIMITED<br>
+                            <b>Account #:</b> 25730200001058<br>
+                            <b>IFSC Code:</b> FDRL0002573
+                        </div>
+                        <div style="text-align: center;">
+                            <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=upi://pay?pa=25730200001058@FDRL0002573.ifsc.npci&pn=Kamadhenu&am={calculated_total}" alt="QR Code">
+                            <div style="font-size: 11px; margin-top: 5px;">Scan to Pay via UPI</div>
+                        </div>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 40px;" class="no-print">
+                        <button onclick="window.print()" style="padding: 10px 20px; background-color: #2e7d32; color: white; border: none; cursor: pointer; border-radius: 4px; font-weight: bold; font-size: 16px;">🖨️ Print or Save as PDF</button>
+                        <style>
+                            @media print {{
+                                .no-print {{ display: none !important; }}
+                                body {{ -webkit-print-color-adjust: exact; }}
+                            }}
+                        </style>
+                    </div>
+                </div>
+                """
+                components.html(invoice_html, height=850, scrolling=True)
+                
         conn.close()
 
 # ==========================================
@@ -359,21 +453,24 @@ elif main_menu == "Sales":
                 conn.commit()
                 st.success(f"Tracking quantities saved for {selected_so}!")
                 
-            # --- NEW INVOICE GENERATOR ---
+            # --- NEW INVOICE GENERATOR FOR SALES (CLIENT RECEIVED BASED) ---
             st.divider()
             st.subheader("🧾 Generate Professional Invoice")
             if st.button("🖨️ Preview & Print Invoice"):
                 c = conn.cursor()
-                c.execute("SELECT c.name, c.contact, c.gstin, s.so_date, s.total_amount FROM so_master s JOIN clients c ON s.client_id = c.id WHERE s.so_id = %s", (int(so_id),))
+                c.execute("SELECT c.name, c.contact, c.gstin, s.so_date FROM so_master s JOIN clients c ON s.client_id = c.id WHERE s.so_id = %s", (int(so_id),))
                 client_info = c.fetchone()
                 
-                c.execute(f"SELECT p.name, i.rate, i.qty FROM so_items i JOIN products p ON i.product_id = p.id WHERE i.so_id = {so_id}")
+                c.execute(f"SELECT p.name, i.rate, i.received_qty FROM so_items i JOIN products p ON i.product_id = p.id WHERE i.so_id = {so_id}")
                 invoice_items = c.fetchall()
                 
                 items_html = ""
+                calculated_total = 0.0
                 for idx, item in enumerate(invoice_items):
-                    item_total = float(item[1]) * float(item[2])
-                    items_html += f"<tr><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{idx+1}</td><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{item[0]}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{float(item[1]):.2f}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{item[2]}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{item_total:.2f}</td></tr>"
+                    actual_qty = float(item[2]) if item[2] is not None else 0.0
+                    item_total = float(item[1]) * actual_qty
+                    calculated_total += item_total
+                    items_html += f"<tr><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{idx+1}</td><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{item[0]}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{float(item[1]):.2f}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{actual_qty}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{item_total:.2f}</td></tr>"
                 
                 invoice_html = f"""
                 <div style="font-family: Arial, sans-serif; max-width: 800px; margin: auto; padding: 40px; border: 1px solid #ddd; background-color: #fff; color: #000;">
@@ -411,7 +508,7 @@ elif main_menu == "Sales":
                                 <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">#</th>
                                 <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Item</th>
                                 <th style="padding: 10px; border: 1px solid #ddd; text-align: right;">Rate / Item</th>
-                                <th style="padding: 10px; border: 1px solid #ddd; text-align: right;">Qty</th>
+                                <th style="padding: 10px; border: 1px solid #ddd; text-align: right;">Received Qty</th>
                                 <th style="padding: 10px; border: 1px solid #ddd; text-align: right;">Amount (₹)</th>
                             </tr>
                         </thead>
@@ -420,7 +517,7 @@ elif main_menu == "Sales":
                         </tbody>
                     </table>
                     
-                    <h3 style="text-align: right; margin-top: 15px; color: #333;">Total Payable: ₹{float(client_info[4]):,.2f}</h3>
+                    <h3 style="text-align: right; margin-top: 15px; color: #333;">Total Payable: ₹{calculated_total:,.2f}</h3>
                     
                     <div style="display: flex; justify-content: space-between; margin-top: 40px; font-size: 14px;">
                         <div style="line-height: 1.6;">
@@ -431,7 +528,7 @@ elif main_menu == "Sales":
                             <b>IFSC Code:</b> FDRL0002573
                         </div>
                         <div style="text-align: center;">
-                            <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=upi://pay?pa=25730200001058@FDRL0002573.ifsc.npci&pn=Kamadhenu&am={client_info[4]}" alt="QR Code">
+                            <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=upi://pay?pa=25730200001058@FDRL0002573.ifsc.npci&pn=Kamadhenu&am={calculated_total}" alt="QR Code">
                             <div style="font-size: 11px; margin-top: 5px;">Scan to Pay via UPI</div>
                         </div>
                     </div>
