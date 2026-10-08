@@ -7,6 +7,7 @@ import platform
 import warnings
 import streamlit.components.v1 as components
 import plotly.express as px
+import streamlit_antd_components as sac
 from database import init_db
 
 warnings.filterwarnings('ignore')
@@ -88,25 +89,98 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==========================================
-# MAIN ERP APP 
+# MAIN ERP APP (ANT DESIGN NAVIGATION)
 # ==========================================
-st.sidebar.title(f"Welcome, {st.session_state.user_role}")
-if st.sidebar.button("Logout"):
-    st.session_state.logged_in = False
-    st.rerun()
+with st.sidebar:
+    st.title(f"Welcome, {st.session_state.user_role}")
+    if st.button("Logout", use_container_width=True):
+        st.session_state.logged_in = False
+        st.rerun()
+    
+    st.markdown("---")
+    
+    # Render Ant Design Nested Menu Based on Role
+    if st.session_state.user_role == "Admin":
+        menu_items = [
+            sac.MenuItem('Dashboard', icon='speedometer2'),
+            sac.MenuItem('Master Data', icon='database', children=[
+                sac.MenuItem('Vendor Onboarding', icon='person-plus'),
+                sac.MenuItem('Client Onboarding', icon='person-badge'),
+                sac.MenuItem('Product Master', icon='box'),
+                sac.MenuItem('Facility Onboarding', icon='building')
+            ]),
+            sac.MenuItem('Purchase', icon='cart3', children=[
+                sac.MenuItem('Create PO', icon='cart-plus'),
+                sac.MenuItem('PO Records & GRN', icon='receipt-cutoff'),
+                sac.MenuItem('View Purchase Orders', icon='table')
+            ]),
+            sac.MenuItem('Sales', icon='graph-up-arrow', children=[
+                sac.MenuItem('Create Sales Order', icon='cart-check'),
+                sac.MenuItem('Sales Records & Tracking', icon='truck-flatbed'),
+                sac.MenuItem('View Sales Orders', icon='table')
+            ]),
+            sac.MenuItem('Inventory', icon='box-seam', children=[
+                sac.MenuItem('Live Stock', icon='boxes'),
+                sac.MenuItem('Ledger History', icon='clock-history')
+            ]),
+            sac.MenuItem('Finance', icon='bank', children=[
+                sac.MenuItem('Add Payment', icon='cash-coin'),
+                sac.MenuItem('Receivables (Client Bills)', icon='graph-up'),
+                sac.MenuItem('Payables (Vendor Bills)', icon='graph-down'),
+                sac.MenuItem('Payment Records (Edit/Delete)', icon='journal-text')
+            ]),
+            sac.MenuItem('Logistics', icon='truck', children=[
+                sac.MenuItem('Add Dispatch Details', icon='send'),
+                sac.MenuItem('Route & Freight Report', icon='map')
+            ]),
+            sac.MenuItem('System Info', icon='info-circle')
+        ]
+    elif st.session_state.user_role == "Sales":
+        menu_items = [
+            sac.MenuItem('Sales', icon='graph-up-arrow', children=[
+                sac.MenuItem('Create Sales Order', icon='cart-check'),
+                sac.MenuItem('Sales Records & Tracking', icon='truck-flatbed'),
+                sac.MenuItem('View Sales Orders', icon='table')
+            ]),
+            sac.MenuItem('Logistics', icon='truck', children=[
+                sac.MenuItem('Add Dispatch Details', icon='send'),
+                sac.MenuItem('Route & Freight Report', icon='map')
+            ])
+        ]
+    elif st.session_state.user_role == "Purchase":
+        menu_items = [
+            sac.MenuItem('Purchase', icon='cart3', children=[
+                sac.MenuItem('Create PO', icon='cart-plus'),
+                sac.MenuItem('PO Records & GRN', icon='receipt-cutoff'),
+                sac.MenuItem('View Purchase Orders', icon='table')
+            ]),
+            sac.MenuItem('Logistics', icon='truck', children=[
+                sac.MenuItem('Add Dispatch Details', icon='send'),
+                sac.MenuItem('Route & Freight Report', icon='map')
+            ])
+        ]
 
-st.sidebar.markdown("---")
-st.sidebar.title("Main Navigation")
+    selected_item = sac.menu(menu_items, format_func='title', open_all=False, size='md', variant='filled', color='#2e7d32')
 
-menu_options = []
-if st.session_state.user_role == "Admin":
-    menu_options = ["Dashboard", "Master Data", "Purchase", "Sales", "Inventory", "Finance", "Logistics", "System Info"]
-elif st.session_state.user_role == "Sales":
-    menu_options = ["Sales", "Logistics"]
-elif st.session_state.user_role == "Purchase":
-    menu_options = ["Purchase", "Logistics"]
+# Map the selected sub-item back to its parent category to power the main view
+parent_map = {
+    'Vendor Onboarding': 'Master Data', 'Client Onboarding': 'Master Data', 'Product Master': 'Master Data', 'Facility Onboarding': 'Master Data',
+    'Create PO': 'Purchase', 'PO Records & GRN': 'Purchase', 'View Purchase Orders': 'Purchase',
+    'Create Sales Order': 'Sales', 'Sales Records & Tracking': 'Sales', 'View Sales Orders': 'Sales',
+    'Live Stock': 'Inventory', 'Ledger History': 'Inventory',
+    'Add Payment': 'Finance', 'Receivables (Client Bills)': 'Finance', 'Payables (Vendor Bills)': 'Finance', 'Payment Records (Edit/Delete)': 'Finance',
+    'Add Dispatch Details': 'Logistics', 'Route & Freight Report': 'Logistics',
+    'Dashboard': 'Dashboard', 'System Info': 'System Info'
+}
 
-main_menu = st.sidebar.selectbox("Select Module", menu_options)
+# Auto-redirect if a parent category is clicked directly without expanding
+if selected_item in ['Master Data', 'Purchase', 'Sales', 'Inventory', 'Finance', 'Logistics']:
+    defaults = {'Master Data': 'Vendor Onboarding', 'Purchase': 'Create PO', 'Sales': 'Create Sales Order', 'Inventory': 'Live Stock', 'Finance': 'Add Payment', 'Logistics': 'Add Dispatch Details'}
+    sub_menu = defaults[selected_item]
+    main_menu = selected_item
+else:
+    main_menu = parent_map.get(selected_item, selected_item)
+    sub_menu = selected_item
 
 def show_data_with_delete(table_name, df, id_prefix):
     if df.empty:
@@ -140,8 +214,6 @@ def show_data_with_delete(table_name, df, id_prefix):
 # 1. MASTER DATA 
 # ==========================================
 if main_menu == "Master Data":
-    sub_menu = st.sidebar.radio("Master Data Options", ["Vendor Onboarding", "Client Onboarding", "Product Master", "Facility Onboarding"])
-    
     if sub_menu == "Vendor Onboarding":
         st.header("Vendor Master")
         with st.form("vendor_form"):
@@ -262,8 +334,6 @@ if main_menu == "Master Data":
 # 2. PURCHASE MODULE
 # ==========================================
 elif main_menu == "Purchase":
-    sub_menu = st.sidebar.radio("Purchase Options", ["Create PO", "PO Records & GRN", "View Purchase Orders"])
-    
     if sub_menu == "Create PO":
         st.header("Punch Purchase Order")
         if 'po_cart' not in st.session_state: st.session_state.po_cart = []
@@ -519,8 +589,6 @@ elif main_menu == "Purchase":
 # 3. SALES MODULE
 # ==========================================
 elif main_menu == "Sales":
-    sub_menu = st.sidebar.radio("Sales Options", ["Create Sales Order", "Sales Records & Tracking", "View Sales Orders"])
-    
     if sub_menu == "Create Sales Order":
         st.header("Punch Sales Order")
         if 'so_cart' not in st.session_state: st.session_state.so_cart = []
@@ -777,7 +845,6 @@ elif main_menu == "Sales":
 # 4. INVENTORY MODULE
 # ==========================================
 elif main_menu == "Inventory":
-    sub_menu = st.sidebar.radio("Inventory Options", ["Live Stock", "Ledger History"])
     if sub_menu == "Live Stock":
         st.header("📦 Live Stock Tracker")
         conn = get_db_connection()
@@ -797,7 +864,6 @@ elif main_menu == "Inventory":
 # 5. FINANCE MODULE 
 # ==========================================
 elif main_menu == "Finance":
-    sub_menu = st.sidebar.radio("Finance Options", ["Add Payment", "Receivables (Client Bills)", "Payables (Vendor Bills)", "Payment Records (Edit/Delete)"])
     if sub_menu == "Add Payment":
         st.header("💸 Record Order-Wise Payment")
         party_type = st.radio("Who are you transacting with?", ["Client (Receiving Money)", "Vendor (Paying Money)"])
@@ -887,7 +953,6 @@ elif main_menu == "Finance":
 # 6. LOGISTICS MODULE
 # ==========================================
 elif main_menu == "Logistics":
-    sub_menu = st.sidebar.radio("Logistics Options", ["Add Dispatch Details", "Route & Freight Report"])
     if sub_menu == "Add Dispatch Details":
         st.header("🚚 Add Dispatch & Freight Details")
         channel = st.radio("Select Channel", ["Purchase (Inbound Pick up)", "Sales (Outbound Dispatch)"])
@@ -996,7 +1061,7 @@ elif main_menu == "Dashboard":
     profit_skus = len(sku_pl_df[sku_pl_df["P&L"] > 0])
     loss_skus = len(sku_pl_df[sku_pl_df["P&L"] < 0])
 
-    # Client Wise P&L Calculation (Client Revenue vs COGS calculated from average purchase rates)
+    # Client Wise P&L Calculation
     client_pl_query = """
         WITH avg_cost AS (
             SELECT product_id, CASE WHEN SUM(grn_qty) > 0 THEN SUM(total)/SUM(grn_qty) ELSE 0 END as cost_per_unit
