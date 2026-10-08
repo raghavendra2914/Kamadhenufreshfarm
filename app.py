@@ -439,10 +439,10 @@ elif main_menu == "Sales":
                     <div style="text-align: center; margin-top: 40px;" class="no-print">
                         <button onclick="window.print()" style="padding: 10px 20px; background-color: #2e7d32; color: white; border: none; cursor: pointer; border-radius: 4px; font-weight: bold; font-size: 16px;">🖨️ Print or Save as PDF</button>
                         <style>
-                            @media print {
-                                .no-print { display: none !important; }
-                                body { -webkit-print-color-adjust: exact; }
-                            }
+                            @media print {{
+                                .no-print {{ display: none !important; }}
+                                body {{ -webkit-print-color-adjust: exact; }}
+                            }}
                         </style>
                     </div>
                 </div>
