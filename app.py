@@ -191,7 +191,8 @@ if main_menu == "Master Data":
 # 2. PURCHASE MODULE
 # ==========================================
 elif main_menu == "Purchase":
-    sub_menu = st.sidebar.radio("Purchase Options", ["Create PO", "PO Records & GRN"])
+    sub_menu = st.sidebar.radio("Purchase Options", ["Create PO", "PO Records & GRN", "View Purchase Orders"])
+    
     if sub_menu == "Create PO":
         st.header("Punch Purchase Order")
         if 'po_cart' not in st.session_state: st.session_state.po_cart = []
@@ -385,6 +386,64 @@ elif main_menu == "Purchase":
                 </div>
                 """
                 components.html(invoice_html, height=850, scrolling=True)
+        conn.close()
+
+    elif sub_menu == "View Purchase Orders":
+        st.header("📋 View & Export Purchase Orders")
+        conn = get_db_connection()
+        
+        # --- FILTERS ---
+        col1, col2, col3 = st.columns(3)
+        start_date = col1.date_input("Start Date", datetime.date.today() - datetime.timedelta(days=30))
+        end_date = col2.date_input("End Date", datetime.date.today())
+        
+        vendors_df = pd.read_sql_query("SELECT name FROM vendors", conn)
+        vendor_list = ["All Vendors"] + vendors_df['name'].tolist()
+        selected_vendor = col3.selectbox("Filter by Vendor", vendor_list)
+        
+        # --- BUILD QUERY ---
+        query = f"SELECT p.po_number as \"PO Number\", p.po_date as \"Date\", v.name as \"Vendor\", p.total_amount as \"Total (Rs)\", p.status as \"Status\" FROM po_master p JOIN vendors v ON p.vendor_id = v.id WHERE p.po_date BETWEEN %s AND %s"
+        params = [str(start_date), str(end_date)]
+        
+        if selected_vendor != "All Vendors":
+            query += " AND v.name = %s"
+            params.append(selected_vendor)
+            
+        query += " ORDER BY p.po_id DESC"
+        
+        po_df = pd.read_sql_query(query, conn, params=params)
+        
+        if po_df.empty:
+            st.info("No Purchase Orders found for the selected dates and vendor.")
+        else:
+            st.dataframe(po_df, use_container_width=True, hide_index=True)
+            
+            # --- CSV DOWNLOAD BUTTON ---
+            csv = po_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download List as CSV",
+                data=csv,
+                file_name=f"Purchase_Orders_{start_date}_to_{end_date}.csv",
+                mime="text/csv",
+                type="primary"
+            )
+            
+            # --- DRILL DOWN / VIEW DETAILS ---
+            st.divider()
+            st.subheader("🔍 View PO Detailed Items")
+            selected_po_view = st.selectbox("Select a PO Number to view inside details", po_df["PO Number"].tolist())
+            
+            if selected_po_view:
+                items_query = f"""
+                SELECT pr.name as "Product", i.qty as "Indent Qty", i.grn_qty as "GRN Qty", i.rate as "Rate (Rs)", i.total as "Total Amount (Rs)" 
+                FROM po_items i 
+                JOIN products pr ON i.product_id = pr.id 
+                JOIN po_master p ON i.po_id = p.po_id 
+                WHERE p.po_number = %s
+                """
+                items_df = pd.read_sql_query(items_query, conn, params=[selected_po_view])
+                st.write(f"**Items inside {selected_po_view}:**")
+                st.dataframe(items_df, use_container_width=True, hide_index=True)
                 
         conn.close()
 
@@ -392,7 +451,8 @@ elif main_menu == "Purchase":
 # 3. SALES MODULE
 # ==========================================
 elif main_menu == "Sales":
-    sub_menu = st.sidebar.radio("Sales Options", ["Create Sales Order", "Sales Records & Tracking"])
+    sub_menu = st.sidebar.radio("Sales Options", ["Create Sales Order", "Sales Records & Tracking", "View Sales Orders"])
+    
     if sub_menu == "Create Sales Order":
         st.header("Punch Sales Order")
         if 'so_cart' not in st.session_state: st.session_state.so_cart = []
@@ -588,6 +648,65 @@ elif main_menu == "Sales":
                 </div>
                 """
                 components.html(invoice_html, height=850, scrolling=True)
+        conn.close()
+
+    elif sub_menu == "View Sales Orders":
+        st.header("📋 View & Export Sales Orders")
+        conn = get_db_connection()
+        
+        # --- FILTERS ---
+        col1, col2, col3 = st.columns(3)
+        start_date = col1.date_input("Start Date", datetime.date.today() - datetime.timedelta(days=30))
+        end_date = col2.date_input("End Date", datetime.date.today())
+        
+        clients_df = pd.read_sql_query("SELECT name FROM clients", conn)
+        client_list = ["All Clients"] + clients_df['name'].tolist()
+        selected_client = col3.selectbox("Filter by Client", client_list)
+        
+        # --- BUILD QUERY ---
+        query = f"SELECT s.so_number as \"SO Number\", s.so_date as \"Date\", c.name as \"Client\", s.total_amount as \"Total (Rs)\", s.status as \"Status\" FROM so_master s JOIN clients c ON s.client_id = c.id WHERE s.so_date BETWEEN %s AND %s"
+        params = [str(start_date), str(end_date)]
+        
+        if selected_client != "All Clients":
+            query += " AND c.name = %s"
+            params.append(selected_client)
+            
+        query += " ORDER BY s.so_id DESC"
+        
+        so_df = pd.read_sql_query(query, conn, params=params)
+        
+        if so_df.empty:
+            st.info("No Sales Orders found for the selected dates and client.")
+        else:
+            st.dataframe(so_df, use_container_width=True, hide_index=True)
+            
+            # --- CSV DOWNLOAD BUTTON ---
+            csv = so_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download List as CSV",
+                data=csv,
+                file_name=f"Sales_Orders_{start_date}_to_{end_date}.csv",
+                mime="text/csv",
+                type="primary"
+            )
+            
+            # --- DRILL DOWN / VIEW DETAILS ---
+            st.divider()
+            st.subheader("🔍 View SO Detailed Items")
+            selected_so_view = st.selectbox("Select a SO Number to view inside details", so_df["SO Number"].tolist())
+            
+            if selected_so_view:
+                items_query = f"""
+                SELECT p.name as "Product", i.qty as "Order Qty", i.received_qty as "Client Received Qty", i.rate as "Rate (Rs)", i.total as "Total Amount (Rs)" 
+                FROM so_items i 
+                JOIN products p ON i.product_id = p.id 
+                JOIN so_master s ON i.so_id = s.so_id 
+                WHERE s.so_number = %s
+                """
+                items_df = pd.read_sql_query(items_query, conn, params=[selected_so_view])
+                st.write(f"**Items inside {selected_so_view}:**")
+                st.dataframe(items_df, use_container_width=True, hide_index=True)
+                
         conn.close()
 
 # ==========================================
