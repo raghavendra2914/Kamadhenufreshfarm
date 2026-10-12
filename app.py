@@ -16,7 +16,7 @@ init_db()
 
 def get_db_connection(): return psycopg2.connect(st.secrets["DATABASE_URL"])
 
-# Auto-update database tables dynamically for the new ERP features
+# Auto-update database tables dynamically
 try:
     conn = get_db_connection()
     c = conn.cursor()
@@ -66,7 +66,7 @@ try:
     """)
     conn.commit()
     conn.close()
-except Exception as e:
+except Exception:
     pass
 
 def recalculate_order_totals(order_type, order_id):
@@ -412,7 +412,7 @@ elif main_menu == "Purchase":
                 prod_dict = {row['id']: f"SKU{int(row['id']):03d} - {row['name']} ({row['tax_rate']}% GST)" for _, row in products.iterrows()}
                 selected_prod_id = c1.selectbox("Select Product", options=list(prod_dict.keys()), format_func=lambda x: prod_dict[x])
                 qty = c2.number_input("Indent Quantity (Ordered)", min_value=1.0, value=1.0, step=1.0)
-                rate = c3.number_input("Rate per unit (Rs)", min_value=0.0, step=10.0)
+                rate = c3.number_input("Rate per unit (Rs)", min_value=0.0, step=1.0)
                 if st.form_submit_button("➕ Click to Add Item"):
                     tax_rate = float(products.loc[products['id'] == selected_prod_id, 'tax_rate'].values[0])
                     base_total = float(qty * rate)
@@ -468,52 +468,48 @@ elif main_menu == "Purchase":
             if items_df.empty:
                 st.warning("No items remaining in this Purchase Order.")
             else:
-                header1, header2, header3, header4, header5 = st.columns([3, 1, 1, 1, 2])
-                header1.write("**Product (Ordered Qty)**")
-                header2.write("**Received Qty**")
-                header3.write("**GRN Qty**")
-                header4.write("**Rate (Rs)**")
-                header5.write("**Actions**")
-                st.markdown("---")
-                
                 for idx, row in items_df.iterrows():
-                    c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 1, 2])
                     item_id = int(row['item_id'])
                     prod_id = int(row['prod_id'])
                     
-                    c1.write(f"📦 {row['Product']} (Ordered: {row['Indent_Qty']})")
-                    new_rec = c2.number_input("Rec", value=float(row['Received_Qty']), key=f"rec_{item_id}", label_visibility="collapsed")
-                    new_grn = c3.number_input("GRN", value=float(row['GRN_Qty']), key=f"grn_{item_id}", label_visibility="collapsed")
-                    new_rate = c4.number_input("Rate", value=float(row['Rate']), key=f"rt_{item_id}", label_visibility="collapsed")
-                    
-                    btn1, btn2 = c5.columns(2)
-                    if btn1.button("✏️ Edit", key=f"ed_{item_id}"):
-                        c = conn.cursor()
-                        c.execute("SELECT tax_rate FROM products WHERE id = %s", (prod_id,))
-                        tax_rate = float(c.fetchone()[0])
-                        base_total = new_grn * new_rate
-                        gst_amount = base_total * (tax_rate / 100)
-                        item_total = base_total + gst_amount
+                    with st.form(key=f"po_item_form_{item_id}"):
+                        st.markdown(f"**📦 {row['Product']}** *(Ordered: {row['Indent_Qty']})*")
+                        c1, c2, c3, c4 = st.columns([1.5, 1.5, 1.5, 2])
+                        new_rec = c1.number_input("Received Qty", value=float(row['Received_Qty']), step=1.0, key=f"f_rec_{item_id}")
+                        new_grn = c2.number_input("GRN Qty", value=float(row['GRN_Qty']), step=1.0, key=f"f_grn_{item_id}")
+                        new_rate = c3.number_input("Rate (Rs)", value=float(row['Rate']), step=0.01, format="%.2f", key=f"f_rt_{item_id}")
                         
-                        c.execute("UPDATE po_items SET received_qty = %s, grn_qty = %s, rate = %s, gst_amount = %s, total = %s WHERE item_id = %s", 
-                                  (new_rec, new_grn, new_rate, gst_amount, item_total, item_id))
-                        c.execute("UPDATE inventory_ledger SET qty_in = %s WHERE ref_type = 'Purchase' AND ref_id = %s AND product_id = %s", 
-                                  (new_grn, str(selected_po), prod_id))
-                        conn.commit()
-                        recalculate_order_totals('PO', po_id)
-                        st.success("Item updated!")
-                        time.sleep(1)
-                        st.rerun()
+                        btn_c1, btn_c2 = c4.columns(2)
+                        save_btn = btn_c1.form_submit_button("✏️ Save Rate & Qty")
+                        del_btn = btn_c2.form_submit_button("🗑️ Delete Item")
                         
-                    if btn2.button("🗑️ Delete", key=f"del_{item_id}"):
-                        c = conn.cursor()
-                        c.execute("DELETE FROM po_items WHERE item_id = %s", (item_id,))
-                        c.execute("DELETE FROM inventory_ledger WHERE ref_type = 'Purchase' AND ref_id = %s AND product_id = %s", (str(selected_po), prod_id))
-                        conn.commit()
-                        recalculate_order_totals('PO', po_id)
-                        st.warning("Item completely deleted from PO and Inventory!")
-                        time.sleep(1)
-                        st.rerun()
+                        if save_btn:
+                            c = conn.cursor()
+                            c.execute("SELECT tax_rate FROM products WHERE id = %s", (prod_id,))
+                            tax_rate = float(c.fetchone()[0])
+                            base_total = new_grn * new_rate
+                            gst_amount = base_total * (tax_rate / 100)
+                            item_total = base_total + gst_amount
+                            
+                            c.execute("UPDATE po_items SET received_qty = %s, grn_qty = %s, rate = %s, gst_amount = %s, total = %s WHERE item_id = %s", 
+                                      (new_rec, new_grn, new_rate, gst_amount, item_total, item_id))
+                            c.execute("UPDATE inventory_ledger SET qty_in = %s WHERE ref_type = 'Purchase' AND ref_id = %s AND product_id = %s", 
+                                      (new_grn, str(selected_po), prod_id))
+                            conn.commit()
+                            recalculate_order_totals('PO', po_id)
+                            st.success(f"Updated! Rate set to ₹{new_rate:.2f}, Total: ₹{item_total:,.2f}")
+                            time.sleep(1)
+                            st.rerun()
+                            
+                        if del_btn:
+                            c = conn.cursor()
+                            c.execute("DELETE FROM po_items WHERE item_id = %s", (item_id,))
+                            c.execute("DELETE FROM inventory_ledger WHERE ref_type = 'Purchase' AND ref_id = %s AND product_id = %s", (str(selected_po), prod_id))
+                            conn.commit()
+                            recalculate_order_totals('PO', po_id)
+                            st.warning("Item completely deleted from PO and Inventory!")
+                            time.sleep(1)
+                            st.rerun()
         conn.close()
 
     elif sub_menu == "View Purchase Orders":
@@ -620,7 +616,7 @@ elif main_menu == "Sales":
                     c1, c2 = st.columns(2)
                     suggested_price = float(products.loc[products['id'] == selected_prod_id, 'default_price'].values[0])
                     qty = c1.number_input("Order Quantity", min_value=1.0, max_value=float(max_available), value=1.0, step=1.0)
-                    rate = c2.number_input("Selling Rate per unit (Rs)", min_value=0.0, value=float(suggested_price), step=10.0)
+                    rate = c2.number_input("Selling Rate per unit (Rs)", min_value=0.0, value=float(suggested_price), step=1.0)
                     
                 if st.form_submit_button("➕ Click to Add Item") and batch_selected:
                     tax_rate = float(products.loc[products['id'] == selected_prod_id, 'tax_rate'].values[0])
@@ -629,8 +625,8 @@ elif main_menu == "Sales":
                     
                     st.session_state.so_cart.append({
                         "prod_id": int(selected_prod_id), 
-                        "Product": str(prod_dict[selected_prod_id]),
-                        "Batch Ref": str(batch_selected),
+                        "Product": str(prod_dict[selected_prod_id]), 
+                        "Batch Ref": str(batch_selected), 
                         "Order Qty": float(qty), 
                         "Rate": float(rate), 
                         "GST Rs": float(gst_amount), 
@@ -678,54 +674,50 @@ elif main_menu == "Sales":
             if items_df.empty:
                 st.warning("No items remaining in this Sales Order.")
             else:
-                header1, header2, header3, header4, header5 = st.columns([3, 1, 1, 1, 2])
-                header1.write("**Product (Ordered Qty)**")
-                header2.write("**Dispatch Qty**")
-                header3.write("**Client Rec Qty**")
-                header4.write("**Rejected Qty**")
-                header5.write("**Actions**")
-                st.markdown("---")
-                
                 for idx, row in items_df.iterrows():
-                    c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 1, 2])
                     item_id = int(row['item_id'])
                     prod_id = int(row['prod_id'])
                     
-                    c1.write(f"📦 {row['Product']} (Ordered: {row['Order_Qty']})")
-                    new_disp = c2.number_input("Disp", value=float(row['Dispatch_Qty']), key=f"disp_{item_id}", label_visibility="collapsed")
-                    new_rec = c3.number_input("Rec", value=float(row['Client_Received_Qty']), key=f"srec_{item_id}", label_visibility="collapsed")
-                    new_rej = c4.number_input("Rej", value=float(row['Rejected_Qty']), key=f"srej_{item_id}", label_visibility="collapsed")
-                    
-                    btn1, btn2 = c5.columns(2)
-                    if btn1.button("✏️ Edit", key=f"sed_{item_id}"):
-                        c = conn.cursor()
-                        rate = float(row['Rate'])
-                        c.execute("SELECT tax_rate FROM products WHERE id = %s", (prod_id,))
-                        tax_rate = float(c.fetchone()[0])
+                    with st.form(key=f"so_item_form_{item_id}"):
+                        st.markdown(f"**📦 {row['Product']}** *(Ordered: {row['Order_Qty']})*")
+                        c1, c2, c3, c4 = st.columns([1.5, 1.5, 1.5, 2])
+                        new_disp = c1.number_input("Dispatch Qty", value=float(row['Dispatch_Qty']), step=1.0, key=f"f_disp_{item_id}")
+                        new_rec = c2.number_input("Client Rec Qty", value=float(row['Client_Received_Qty']), step=1.0, key=f"f_srec_{item_id}")
+                        new_rej = c3.number_input("Rejected Qty", value=float(row['Rejected_Qty']), step=1.0, key=f"f_srej_{item_id}")
                         
-                        base_total = new_rec * rate
-                        gst_amount = base_total * (tax_rate / 100)
-                        item_total = base_total + gst_amount
+                        btn_c1, btn_c2 = c4.columns(2)
+                        save_btn = btn_c1.form_submit_button("✏️ Save Dispatch")
+                        del_btn = btn_c2.form_submit_button("🗑️ Delete Item")
                         
-                        c.execute("UPDATE so_items SET dispatch_qty = %s, received_qty = %s, rejected_qty = %s, gst_amount = %s, total = %s WHERE item_id = %s", 
-                                  (new_disp, new_rec, new_rej, gst_amount, item_total, item_id))
-                        c.execute("UPDATE inventory_ledger SET qty_out = %s WHERE ref_type = 'Sale' AND ref_id = %s AND product_id = %s", 
-                                  (new_rec, str(selected_so), prod_id))
-                        conn.commit()
-                        recalculate_order_totals('SO', so_id)
-                        st.success("Item updated!")
-                        time.sleep(1)
-                        st.rerun()
-                        
-                    if btn2.button("🗑️ Delete", key=f"sdel_{item_id}"):
-                        c = conn.cursor()
-                        c.execute("DELETE FROM so_items WHERE item_id = %s", (item_id,))
-                        c.execute("DELETE FROM inventory_ledger WHERE ref_type = 'Sale' AND ref_id = %s AND product_id = %s", (str(selected_so), prod_id))
-                        conn.commit()
-                        recalculate_order_totals('SO', so_id)
-                        st.warning("Item completely deleted from SO and Inventory!")
-                        time.sleep(1)
-                        st.rerun()
+                        if save_btn:
+                            c = conn.cursor()
+                            rate = float(row['Rate'])
+                            c.execute("SELECT tax_rate FROM products WHERE id = %s", (prod_id,))
+                            tax_rate = float(c.fetchone()[0])
+                            
+                            base_total = new_rec * rate
+                            gst_amount = base_total * (tax_rate / 100)
+                            item_total = base_total + gst_amount
+                            
+                            c.execute("UPDATE so_items SET dispatch_qty = %s, received_qty = %s, rejected_qty = %s, gst_amount = %s, total = %s WHERE item_id = %s", 
+                                      (new_disp, new_rec, new_rej, gst_amount, item_total, item_id))
+                            c.execute("UPDATE inventory_ledger SET qty_out = %s WHERE ref_type = 'Sale' AND ref_id = %s AND product_id = %s", 
+                                      (new_rec, str(selected_so), prod_id))
+                            conn.commit()
+                            recalculate_order_totals('SO', so_id)
+                            st.success(f"Updated! Client Received: {new_rec}, Total: ₹{item_total:,.2f}")
+                            time.sleep(1)
+                            st.rerun()
+                            
+                        if del_btn:
+                            c = conn.cursor()
+                            c.execute("DELETE FROM so_items WHERE item_id = %s", (item_id,))
+                            c.execute("DELETE FROM inventory_ledger WHERE ref_type = 'Sale' AND ref_id = %s AND product_id = %s", (str(selected_so), prod_id))
+                            conn.commit()
+                            recalculate_order_totals('SO', so_id)
+                            st.warning("Item completely deleted from SO and Inventory!")
+                            time.sleep(1)
+                            st.rerun()
         conn.close()
 
     elif sub_menu == "View Sales Orders":
@@ -834,6 +826,95 @@ elif main_menu == "Inventory":
         conn.close()
 
 # ==========================================
+# 5. FINANCE MODULE
+# ==========================================
+elif main_menu == "Finance":
+    if sub_menu == "Add Payment":
+        st.header("💸 Record Order-Wise Payment")
+        party_type = st.radio("Who are you transacting with?", ["Client (Receiving Money)", "Vendor (Paying Money)"])
+        conn = get_db_connection()
+        if "Client" in party_type:
+            parties = pd.read_sql_query("SELECT id, name FROM clients", conn)
+            db_party_type = "Client"
+            prefix = "S-"
+        else:
+            parties = pd.read_sql_query("SELECT id, name FROM vendors", conn)
+            db_party_type = "Vendor"
+            prefix = "V"
+            
+        if parties.empty: st.warning(f"No {db_party_type}s found.")
+        else:
+            party_dict = {row['id']: f"{prefix}{int(row['id']):03d} - {row['name']}" for _, row in parties.iterrows()}
+            selected_party = st.selectbox("Select Party", options=list(party_dict.keys()), format_func=lambda x: party_dict[x])
+            if db_party_type == "Vendor":
+                orders_query = f"SELECT p.po_number as order_no, ROUND(CAST(p.total_amount - COALESCE((SELECT SUM(amount) FROM payments WHERE order_no = p.po_number), 0) AS NUMERIC), 2) as pending_amount FROM po_master p WHERE p.vendor_id = {selected_party} AND ROUND(CAST(p.total_amount - COALESCE((SELECT SUM(amount) FROM payments WHERE order_no = p.po_number), 0) AS NUMERIC), 2) > 0.01"
+            else:
+                orders_query = f"SELECT s.so_number as order_no, ROUND(CAST(s.total_amount - COALESCE((SELECT SUM(amount) FROM payments WHERE order_no = s.so_number), 0) AS NUMERIC), 2) as pending_amount FROM so_master s WHERE s.client_id = {selected_party} AND ROUND(CAST(s.total_amount - COALESCE((SELECT SUM(amount) FROM payments WHERE order_no = s.so_number), 0) AS NUMERIC), 2) > 0.01"
+            orders_df = pd.read_sql_query(orders_query, conn)
+            if orders_df.empty:
+                st.success(f"✅ All bills for {party_dict[selected_party]} are fully paid!")
+            else:
+                st.info(f"📌 Found {len(orders_df)} unpaid bill(s) remaining for {party_dict[selected_party]}.")
+                col1, col2 = st.columns(2)
+                order_list = orders_df['order_no'].tolist()
+                selected_order = col1.selectbox("Select Pending Bill/Order to Pay", order_list)
+                pending_amount = orders_df.loc[orders_df['order_no'] == selected_order, 'pending_amount'].values[0]
+                pay_date = col2.date_input("Payment Date", datetime.date.today())
+                amount = col1.number_input("Amount (Rs)", min_value=0.0, value=float(pending_amount), step=10.0)
+                pay_mode = col2.selectbox("Payment Mode", ["UPI", "Bank Transfer (NEFT/RTGS)", "Cash", "Cheque"])
+                utr_no = col1.text_input("UTR / Transaction Ref Number *")
+                notes = col2.text_input("Notes")
+                if st.button("💾 Save & Mark as Paid", type="primary"):
+                    if utr_no or pay_mode == "Cash":
+                        c = conn.cursor()
+                        c.execute("INSERT INTO payments (party_type, party_id, order_no, amount, payment_mode, utr_number, txn_date, notes) VALUES (%s, %s, %s, %s, %s, %s, %s)", (str(db_party_type), int(selected_party), str(selected_order), float(amount), str(pay_mode), str(utr_no), str(pay_date), str(notes)))
+                        conn.commit()
+                        st.success(f"✅ SUCCESS! Payment of Rs {amount} saved for {selected_order}.")
+                        time.sleep(1.5)
+                        st.rerun()
+                    else: st.error("UTR / Reference number is required for Bank/UPI transactions.")
+        conn.close()
+                    
+    elif sub_menu == "Receivables (Client Bills)":
+        st.header("📈 Client Receivables (Bill-wise)")
+        conn = get_db_connection()
+        query = 'SELECT s.so_number as "Sales Order", c.name as "Client", s.so_date as "Date", s.total_amount as "Bill Amount (Rs)", COALESCE((SELECT SUM(amount) FROM payments WHERE order_no = s.so_number), 0) as "Paid Amount (Rs)" FROM so_master s JOIN clients c ON s.client_id = c.id ORDER BY s.so_id DESC'
+        df = pd.read_sql_query(query, conn)
+        if not df.empty:
+            df['Balance (Rs)'] = (df['Bill Amount (Rs)'] - df['Paid Amount (Rs)']).astype(float).round(2)
+            df['Status'] = df['Balance (Rs)'].apply(lambda x: '✅ Payment Made' if x <= 0.01 else '⏳ Pending')
+            utr_df = pd.read_sql_query("SELECT order_no, string_agg(utr_number, ', ') as UTRs FROM payments GROUP BY order_no", conn)
+            df = df.merge(utr_df, left_on='Sales Order', right_on='order_no', how='left').drop(columns=['order_no'])
+            df['UTRs'] = df['utrs'].fillna('-')
+            df.drop(columns=['utrs'], inplace=True, errors='ignore')
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else: st.info("No Sales Orders found.")
+        conn.close()
+            
+    elif sub_menu == "Payables (Vendor Bills)":
+        st.header("📉 Vendor Payables (Bill-wise)")
+        conn = get_db_connection()
+        query = 'SELECT p.po_number as "Purchase Order", v.name as "Vendor", p.po_date as "Date", p.total_amount as "Bill Amount (Rs)", COALESCE((SELECT SUM(amount) FROM payments WHERE order_no = p.po_number), 0) as "Paid Amount (Rs)" FROM po_master p JOIN vendors v ON p.vendor_id = v.id ORDER BY p.po_id DESC'
+        df = pd.read_sql_query(query, conn)
+        if not df.empty:
+            df['Balance (Rs)'] = (df['Bill Amount (Rs)'] - df['Paid Amount (Rs)']).astype(float).round(2)
+            df['Status'] = df['Balance (Rs)'].apply(lambda x: '✅ Payment Made' if x <= 0.01 else '⏳ Pending')
+            utr_df = pd.read_sql_query("SELECT order_no, string_agg(utr_number, ', ') as UTRs FROM payments GROUP BY order_no", conn)
+            df = df.merge(utr_df, left_on='Purchase Order', right_on='order_no', how='left').drop(columns=['order_no'])
+            df['UTRs'] = df['utrs'].fillna('-')
+            df.drop(columns=['utrs'], inplace=True, errors='ignore')
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else: st.info("No Purchase Orders found.")
+        conn.close()
+
+    elif sub_menu == "Payment Records":
+        st.header("Payment History")
+        conn = get_db_connection()
+        payments_df = pd.read_sql_query('SELECT id, txn_date as "Date", party_type as "Type", order_no as "Order Ref", amount as "Amount (Rs)", payment_mode as "Mode", utr_number as "UTR" FROM payments ORDER BY id DESC', conn)
+        show_data_with_delete("payments", payments_df, "PAY-")
+        conn.close()
+
+# ==========================================
 # 6. LOGISTICS, EXPENSES & OPS
 # ==========================================
 elif main_menu == "Logistics & Ops":
@@ -897,7 +978,7 @@ elif main_menu == "Logistics & Ops":
                 from_loc = col2.text_input("From Location *")
                 to_loc = col1.text_input("To (Destination) *")
                 dist = col2.number_input("Distance (KM)", min_value=0.0, step=1.0)
-                freight = col1.number_input("Total Freight Cost (Rs)", min_value=0.0, step=100.0, help="For records only. Add exact monetary deductions in 'Add PO/SO Expenses'.")
+                freight = col1.number_input("Total Freight Cost (Rs)", min_value=0.0, step=100.0)
                 if st.form_submit_button("💾 Save Logistics Details"):
                     if vehicle_no and from_loc and to_loc:
                         c = conn.cursor()
