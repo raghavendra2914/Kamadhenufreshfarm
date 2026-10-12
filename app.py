@@ -456,9 +456,11 @@ elif main_menu == "Purchase":
     elif sub_menu == "PO Records & GRN":
         st.header("Update & Delete Purchase Order Items (GRN)")
         conn = get_db_connection()
-        pos = pd.read_sql_query("SELECT po_id, po_number FROM po_master ORDER BY po_id DESC", conn)
+        orders_query = "SELECT p.po_id, p.po_number, p.po_date, v.name as party_name FROM po_master p JOIN vendors v ON p.vendor_id = v.id ORDER BY p.po_id DESC"
+        pos = pd.read_sql_query(orders_query, conn)
         if not pos.empty:
-            selected_po = st.selectbox("Select Purchase Order to Update", pos['po_number'].tolist())
+            order_dict = {row['po_number']: f"{row['po_number']} | {row['party_name']} | {row['po_date']}" for _, row in pos.iterrows()}
+            selected_po = st.selectbox("Select Purchase Order to Update", options=list(order_dict.keys()), format_func=lambda x: order_dict[x])
             po_id = int(pos.loc[pos['po_number'] == selected_po, 'po_id'].values[0])
             st.write("---")
             
@@ -616,7 +618,7 @@ elif main_menu == "Sales":
                     c1, c2 = st.columns(2)
                     suggested_price = float(products.loc[products['id'] == selected_prod_id, 'default_price'].values[0])
                     qty = c1.number_input("Order Quantity", min_value=1.0, max_value=float(max_available), value=1.0, step=1.0)
-                    rate = c2.number_input("Selling Rate per unit (Rs)", min_value=0.0, value=float(suggested_price), step=1.0)
+                    rate = c2.number_input("Selling Rate per unit (Rs)", min_value=0.0, value=float(suggested_price), step=10.0)
                     
                 if st.form_submit_button("➕ Click to Add Item") and batch_selected:
                     tax_rate = float(products.loc[products['id'] == selected_prod_id, 'tax_rate'].values[0])
@@ -625,8 +627,8 @@ elif main_menu == "Sales":
                     
                     st.session_state.so_cart.append({
                         "prod_id": int(selected_prod_id), 
-                        "Product": str(prod_dict[selected_prod_id]), 
-                        "Batch Ref": str(batch_selected), 
+                        "Product": str(prod_dict[selected_prod_id]),
+                        "Batch Ref": str(batch_selected),
                         "Order Qty": float(qty), 
                         "Rate": float(rate), 
                         "GST Rs": float(gst_amount), 
@@ -662,9 +664,11 @@ elif main_menu == "Sales":
     elif sub_menu == "Sales Records & Tracking":
         st.header("Update & Delete Sales Order Items (Dispatch)")
         conn = get_db_connection()
-        sos = pd.read_sql_query("SELECT so_id, so_number FROM so_master ORDER BY so_id DESC", conn)
+        orders_query = "SELECT s.so_id, s.so_number, s.so_date, c.name as party_name FROM so_master s JOIN clients c ON s.client_id = c.id ORDER BY s.so_id DESC"
+        sos = pd.read_sql_query(orders_query, conn)
         if not sos.empty:
-            selected_so = st.selectbox("Select Sales Order to Update", sos['so_number'].tolist())
+            order_dict = {row['so_number']: f"{row['so_number']} | {row['party_name']} | {row['so_date']}" for _, row in sos.iterrows()}
+            selected_so = st.selectbox("Select Sales Order to Update", options=list(order_dict.keys()), format_func=lambda x: order_dict[x])
             so_id = int(sos.loc[sos['so_number'] == selected_so, 'so_id'].values[0])
             st.write("---")
             
@@ -867,7 +871,7 @@ elif main_menu == "Finance":
                 if st.button("💾 Save & Mark as Paid", type="primary"):
                     if utr_no or pay_mode == "Cash":
                         c = conn.cursor()
-                        c.execute("INSERT INTO payments (party_type, party_id, order_no, amount, payment_mode, utr_number, txn_date, notes) VALUES (%s, %s, %s, %s, %s, %s, %s)", (str(db_party_type), int(selected_party), str(selected_order), float(amount), str(pay_mode), str(utr_no), str(pay_date), str(notes)))
+                        c.execute("INSERT INTO payments (party_type, party_id, order_no, amount, payment_mode, utr_number, txn_date, notes) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", (str(db_party_type), int(selected_party), str(selected_order), float(amount), str(pay_mode), str(utr_no), str(pay_date), str(notes)))
                         conn.commit()
                         st.success(f"✅ SUCCESS! Payment of Rs {amount} saved for {selected_order}.")
                         time.sleep(1.5)
