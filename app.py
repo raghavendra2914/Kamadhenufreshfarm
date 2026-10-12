@@ -16,7 +16,7 @@ init_db()
 
 def get_db_connection(): return psycopg2.connect(st.secrets["DATABASE_URL"])
 
-# Auto-update database tables dynamically for the new Master Data features
+# Auto-update database tables dynamically for the new ERP features
 try:
     conn = get_db_connection()
     c = conn.cursor()
@@ -32,6 +32,36 @@ try:
             capacity NUMERIC,
             incharge_name VARCHAR(100),
             contact VARCHAR(50)
+        );
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS employees (
+            id SERIAL PRIMARY KEY,
+            emp_name VARCHAR(200),
+            role VARCHAR(100),
+            salary_per_day NUMERIC,
+            join_date DATE,
+            status VARCHAR(50) DEFAULT 'Active'
+        );
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS order_expenses (
+            id SERIAL PRIMARY KEY,
+            order_ref VARCHAR(100),
+            expense_type VARCHAR(100),
+            amount NUMERIC,
+            notes TEXT,
+            logged_date DATE
+        );
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS wastage_ledger (
+            id SERIAL PRIMARY KEY,
+            product_id INTEGER,
+            batch_no VARCHAR(100),
+            qty NUMERIC,
+            reason TEXT,
+            log_date DATE
         );
     """)
     conn.commit()
@@ -99,7 +129,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Render Ant Design Nested Menu Based on Role
     if st.session_state.user_role == "Admin":
         menu_items = [
             sac.MenuItem('Dashboard', icon='speedometer2'),
@@ -108,6 +137,9 @@ with st.sidebar:
                 sac.MenuItem('Client Onboarding', icon='person-badge'),
                 sac.MenuItem('Product Master', icon='box'),
                 sac.MenuItem('Facility Onboarding', icon='building')
+            ]),
+            sac.MenuItem('HR & Payroll', icon='people', children=[
+                sac.MenuItem('Employee Master', icon='person-vcard')
             ]),
             sac.MenuItem('Purchase', icon='cart3', children=[
                 sac.MenuItem('Create PO', icon='cart-plus'),
@@ -121,61 +153,46 @@ with st.sidebar:
             ]),
             sac.MenuItem('Inventory', icon='box-seam', children=[
                 sac.MenuItem('Live Stock', icon='boxes'),
-                sac.MenuItem('Ledger History', icon='clock-history')
+                sac.MenuItem('Ledger History', icon='clock-history'),
+                sac.MenuItem('Log Wastage & Spoilage', icon='trash3')
             ]),
             sac.MenuItem('Finance', icon='bank', children=[
                 sac.MenuItem('Add Payment', icon='cash-coin'),
                 sac.MenuItem('Receivables (Client Bills)', icon='graph-up'),
                 sac.MenuItem('Payables (Vendor Bills)', icon='graph-down'),
-                sac.MenuItem('Payment Records (Edit/Delete)', icon='journal-text')
+                sac.MenuItem('Payment Records', icon='journal-text')
             ]),
-            sac.MenuItem('Logistics', icon='truck', children=[
+            sac.MenuItem('Logistics & Ops', icon='truck', children=[
+                sac.MenuItem('Add PO/SO Expenses', icon='currency-rupee'),
                 sac.MenuItem('Add Dispatch Details', icon='send'),
                 sac.MenuItem('Route & Freight Report', icon='map')
             ]),
             sac.MenuItem('System Info', icon='info-circle')
         ]
-    elif st.session_state.user_role == "Sales":
+    else:
         menu_items = [
+            sac.MenuItem('Dashboard', icon='speedometer2'),
             sac.MenuItem('Sales', icon='graph-up-arrow', children=[
                 sac.MenuItem('Create Sales Order', icon='cart-check'),
-                sac.MenuItem('Sales Records & Tracking', icon='truck-flatbed'),
-                sac.MenuItem('View Sales Orders', icon='table')
-            ]),
-            sac.MenuItem('Logistics', icon='truck', children=[
-                sac.MenuItem('Add Dispatch Details', icon='send'),
-                sac.MenuItem('Route & Freight Report', icon='map')
-            ])
-        ]
-    elif st.session_state.user_role == "Purchase":
-        menu_items = [
-            sac.MenuItem('Purchase', icon='cart3', children=[
-                sac.MenuItem('Create PO', icon='cart-plus'),
-                sac.MenuItem('PO Records & GRN', icon='receipt-cutoff'),
-                sac.MenuItem('View Purchase Orders', icon='table')
-            ]),
-            sac.MenuItem('Logistics', icon='truck', children=[
-                sac.MenuItem('Add Dispatch Details', icon='send'),
-                sac.MenuItem('Route & Freight Report', icon='map')
+                sac.MenuItem('Sales Records & Tracking', icon='truck-flatbed')
             ])
         ]
 
     selected_item = sac.menu(menu_items, format_func='title', open_all=False, size='md', variant='filled', color='#2e7d32')
 
-# Map the selected sub-item back to its parent category to power the main view
 parent_map = {
     'Vendor Onboarding': 'Master Data', 'Client Onboarding': 'Master Data', 'Product Master': 'Master Data', 'Facility Onboarding': 'Master Data',
+    'Employee Master': 'HR & Payroll',
     'Create PO': 'Purchase', 'PO Records & GRN': 'Purchase', 'View Purchase Orders': 'Purchase',
     'Create Sales Order': 'Sales', 'Sales Records & Tracking': 'Sales', 'View Sales Orders': 'Sales',
-    'Live Stock': 'Inventory', 'Ledger History': 'Inventory',
-    'Add Payment': 'Finance', 'Receivables (Client Bills)': 'Finance', 'Payables (Vendor Bills)': 'Finance', 'Payment Records (Edit/Delete)': 'Finance',
-    'Add Dispatch Details': 'Logistics', 'Route & Freight Report': 'Logistics',
+    'Live Stock': 'Inventory', 'Ledger History': 'Inventory', 'Log Wastage & Spoilage': 'Inventory',
+    'Add Payment': 'Finance', 'Receivables (Client Bills)': 'Finance', 'Payables (Vendor Bills)': 'Finance', 'Payment Records': 'Finance',
+    'Add PO/SO Expenses': 'Logistics & Ops', 'Add Dispatch Details': 'Logistics & Ops', 'Route & Freight Report': 'Logistics & Ops',
     'Dashboard': 'Dashboard', 'System Info': 'System Info'
 }
 
-# Auto-redirect if a parent category is clicked directly without expanding
-if selected_item in ['Master Data', 'Purchase', 'Sales', 'Inventory', 'Finance', 'Logistics']:
-    defaults = {'Master Data': 'Vendor Onboarding', 'Purchase': 'Create PO', 'Sales': 'Create Sales Order', 'Inventory': 'Live Stock', 'Finance': 'Add Payment', 'Logistics': 'Add Dispatch Details'}
+if selected_item in ['Master Data', 'HR & Payroll', 'Purchase', 'Sales', 'Inventory', 'Finance', 'Logistics & Ops']:
+    defaults = {'Master Data': 'Vendor Onboarding', 'HR & Payroll': 'Employee Master', 'Purchase': 'Create PO', 'Sales': 'Create Sales Order', 'Inventory': 'Live Stock', 'Finance': 'Add Payment', 'Logistics & Ops': 'Add PO/SO Expenses'}
     sub_menu = defaults[selected_item]
     main_menu = selected_item
 else:
@@ -224,64 +241,42 @@ if main_menu == "Master Data":
             v_pan = c2.text_input("PAN")
             v_address = st.text_area("Full Address")
             v_terms = st.text_input("Payment Terms")
-            
-            st.markdown("### 🏦 Secure Bank Details")
-            c3, c4 = st.columns(2)
-            bank_acc1 = c3.text_input("Account Number *", type="password", help="Enter the vendor's bank account number.")
-            bank_acc2 = c4.text_input("Confirm Account Number *", help="Re-enter to verify accuracy.")
-            v_ifsc = c3.text_input("IFSC Code *")
-            v_file = st.file_uploader("Upload Cancelled Cheque / Passbook Image", type=["pdf", "jpg", "jpeg", "png"])
-            
             if st.form_submit_button("Save Vendor"):
-                if not v_name or not bank_acc1 or not bank_acc2 or not v_ifsc:
-                    st.error("Please fill all mandatory (*) fields including Bank details.")
-                elif bank_acc1 != bank_acc2:
-                    st.error("Account Numbers do not match! Please check again.")
-                else:
-                    file_data = psycopg2.Binary(v_file.read()) if v_file else None
+                if v_name:
                     conn = get_db_connection()
                     c = conn.cursor()
-                    c.execute("INSERT INTO vendors (name, contact, address, gstin, pan, payment_terms, bank_account, ifsc_code, passbook_file) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", 
-                              (str(v_name), str(v_contact), str(v_address), str(v_gstin), str(v_pan), str(v_terms), str(bank_acc1), str(v_ifsc), file_data))
+                    c.execute("INSERT INTO vendors (name, contact, address, gstin, pan, payment_terms) VALUES (%s, %s, %s, %s, %s, %s)", 
+                              (str(v_name), str(v_contact), str(v_address), str(v_gstin), str(v_pan), str(v_terms)))
                     conn.commit()
                     conn.close()
-                    st.success("Vendor and Bank details securely saved!")
-                    time.sleep(1.5)
+                    st.success("Vendor saved!")
+                    time.sleep(1)
                     st.rerun()
-                    
         st.subheader("Registered Vendors")
         conn = get_db_connection()
-        show_data_with_delete("vendors", pd.read_sql_query("SELECT id, name, contact, gstin, bank_account as \"A/C No\" FROM vendors", conn), "V")
+        show_data_with_delete("vendors", pd.read_sql_query("SELECT id, name, contact, gstin FROM vendors", conn), "V")
         conn.close()
         
     elif sub_menu == "Facility Onboarding":
         st.header("🏢 Facility Master")
         with st.form("facility_form"):
             c1, c2 = st.columns(2)
-            f_name = c1.text_input("Facility Name * (e.g. HSR Hub, Farm 1)")
+            f_name = c1.text_input("Facility Name *")
             f_type = c2.selectbox("Facility Type", ["Warehouse", "Processing Unit", "Cold Storage", "Retail Outlet", "Farm", "Other"])
             f_loc = st.text_area("Full Location Address *")
-            f_capacity = c1.number_input("Capacity (Sq Ft / Metric Tons)", min_value=0.0)
-            f_incharge = c2.text_input("In-Charge Name")
-            f_contact = c1.text_input("Contact Number")
-            
             if st.form_submit_button("Save Facility"):
                 if f_name and f_loc:
                     conn = get_db_connection()
                     c = conn.cursor()
-                    c.execute("INSERT INTO facilities (name, location, facility_type, capacity, incharge_name, contact) VALUES (%s, %s, %s, %s, %s, %s)", 
-                              (str(f_name), str(f_loc), str(f_type), float(f_capacity), str(f_incharge), str(f_contact)))
+                    c.execute("INSERT INTO facilities (name, location, facility_type) VALUES (%s, %s, %s)", (str(f_name), str(f_loc), str(f_type)))
                     conn.commit()
                     conn.close()
                     st.success("Facility securely saved!")
                     time.sleep(1)
                     st.rerun()
-                else:
-                    st.error("Facility Name and Location are mandatory.")
-                    
         st.subheader("Registered Facilities")
         conn = get_db_connection()
-        fac_df = pd.read_sql_query('SELECT id, name as "Facility", facility_type as "Type", incharge_name as "Manager", location as "Address" FROM facilities', conn)
+        fac_df = pd.read_sql_query('SELECT id, name as "Facility", facility_type as "Type", location as "Address" FROM facilities', conn)
         show_data_with_delete("facilities", fac_df, "FAC-")
         conn.close()
         
@@ -331,6 +326,36 @@ if main_menu == "Master Data":
         conn.close()
 
 # ==========================================
+# HR & PAYROLL MODULE
+# ==========================================
+elif main_menu == "HR & Payroll":
+    if sub_menu == "Employee Master":
+        st.header("👷 Employee Master (Payroll Tracking)")
+        with st.form("emp_form"):
+            c1, c2 = st.columns(2)
+            e_name = c1.text_input("Employee Name *")
+            e_role = c2.selectbox("Role / Designation", ["Farm Worker", "Driver", "Manager", "Admin", "Sales Rep", "Other"])
+            e_salary = c1.number_input("Salary / Wages (Per Day) *", min_value=0.0, step=50.0)
+            e_join = c2.date_input("Join Date")
+            if st.form_submit_button("Save Employee"):
+                if e_name and e_salary >= 0:
+                    conn = get_db_connection()
+                    c = conn.cursor()
+                    c.execute("INSERT INTO employees (emp_name, role, salary_per_day, join_date) VALUES (%s, %s, %s, %s)", (str(e_name), str(e_role), float(e_salary), str(e_join)))
+                    conn.commit()
+                    conn.close()
+                    st.success("Employee saved!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Name and Salary are required.")
+                    
+        st.subheader("Active Employees")
+        conn = get_db_connection()
+        show_data_with_delete("employees", pd.read_sql_query('SELECT id, emp_name as "Name", role as "Designation", salary_per_day as "Daily Wage (Rs)" FROM employees', conn), "EMP-")
+        conn.close()
+
+# ==========================================
 # 2. PURCHASE MODULE
 # ==========================================
 elif main_menu == "Purchase":
@@ -340,14 +365,20 @@ elif main_menu == "Purchase":
         conn = get_db_connection()
         vendors = pd.read_sql_query("SELECT id, name FROM vendors", conn)
         products = pd.read_sql_query("SELECT id, name, tax_rate FROM products", conn)
+        facilities = pd.read_sql_query("SELECT id, name FROM facilities", conn)
         conn.close()
+        
         if vendors.empty or products.empty: st.warning("⚠️ Please add Master Data first.")
         else:
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             vendor_dict = {row['id']: f"V{int(row['id']):03d} - {row['name']}" for _, row in vendors.iterrows()}
+            fac_list = ["Default Warehouse"] + facilities['name'].tolist() if not facilities.empty else ["Default Warehouse"]
+            
             selected_vendor_id = col1.selectbox("Select Vendor", options=list(vendor_dict.keys()), format_func=lambda x: vendor_dict[x])
-            po_date = col2.date_input("PO Date")
+            selected_facility = col2.selectbox("Receiving Facility", fac_list)
+            po_date = col3.date_input("PO Date")
             st.divider()
+            
             with st.form("add_item_form"):
                 c1, c2, c3 = st.columns(3)
                 prod_dict = {row['id']: f"SKU{int(row['id']):03d} - {row['name']} ({row['tax_rate']}% GST)" for _, row in products.iterrows()}
@@ -390,7 +421,7 @@ elif main_menu == "Purchase":
                     conn.commit()
                     conn.close()
                     st.session_state.po_cart = []
-                    st.success(f"Generated {po_number}!")
+                    st.success(f"Generated {po_number} at {selected_facility}!")
                     time.sleep(1)
                     st.rerun()
 
@@ -401,9 +432,9 @@ elif main_menu == "Purchase":
         if not pos.empty:
             selected_po = st.selectbox("Select Purchase Order to Update", pos['po_number'].tolist())
             po_id = int(pos.loc[pos['po_number'] == selected_po, 'po_id'].values[0])
-            st.write("✏️ **Double-click the numbers in 'Received_Qty' and 'GRN_Qty' below to edit them!**")
+            st.write("✏️ **Double-click the numbers in 'Received_Qty', 'GRN_Qty', and 'Rate' below to edit them!**")
             
-            items_query = f'SELECT item_id, p.name as "Product", qty as "Indent_Qty", COALESCE(received_qty, qty) as "Received_Qty", COALESCE(grn_qty, qty) as "GRN_Qty" FROM po_items i JOIN products p ON i.product_id = p.id WHERE po_id = {po_id}'
+            items_query = f'SELECT item_id, p.name as "Product", qty as "Indent_Qty", COALESCE(received_qty, qty) as "Received_Qty", COALESCE(grn_qty, qty) as "GRN_Qty", rate as "Rate" FROM po_items i JOIN products p ON i.product_id = p.id WHERE po_id = {po_id}'
             items_df = pd.read_sql_query(items_query, conn)
             
             edited_po_df = st.data_editor(items_df, disabled=["item_id", "Product", "Indent_Qty"], hide_index=True, use_container_width=True)
@@ -413,127 +444,32 @@ elif main_menu == "Purchase":
                 for index, row in edited_po_df.iterrows():
                     item_id = int(row['item_id'])
                     grn_qty = float(row['GRN_Qty'])
+                    new_rate = float(row['Rate'])
                     
-                    c.execute("SELECT product_id, rate FROM po_items WHERE item_id = %s", (item_id,))
-                    prod_data = c.fetchone()
-                    prod_id = int(prod_data[0])
-                    rate = float(prod_data[1])
-                    
+                    c.execute("SELECT product_id FROM po_items WHERE item_id = %s", (item_id,))
+                    prod_id = int(c.fetchone()[0])
                     c.execute("SELECT tax_rate FROM products WHERE id = %s", (prod_id,))
                     tax_rate = float(c.fetchone()[0])
                     
-                    base_total = grn_qty * rate
+                    base_total = grn_qty * new_rate
                     gst_amount = base_total * (tax_rate / 100)
                     item_total = base_total + gst_amount
                     new_grand_total += item_total
                     
-                    c.execute("UPDATE po_items SET received_qty = %s, grn_qty = %s, gst_amount = %s, total = %s WHERE item_id = %s", 
-                              (float(row['Received_Qty']), grn_qty, float(gst_amount), float(item_total), item_id))
-                              
+                    c.execute("UPDATE po_items SET received_qty = %s, grn_qty = %s, rate = %s, gst_amount = %s, total = %s WHERE item_id = %s", 
+                              (float(row['Received_Qty']), grn_qty, new_rate, float(gst_amount), float(item_total), item_id))
                     c.execute("UPDATE inventory_ledger SET qty_in = %s WHERE ref_type = 'Purchase' AND ref_id = %s AND product_id = %s", 
                               (grn_qty, str(selected_po), prod_id))
                               
                 c.execute("UPDATE po_master SET total_amount = %s WHERE po_id = %s", (float(new_grand_total), po_id))
                 conn.commit()
-                st.success(f"Tracking quantities, inventory, and financials updated for {selected_po}!")
+                st.success(f"Tracking quantities, dynamic pricing, and financials updated for {selected_po}!")
                 time.sleep(1)
                 st.rerun()
-                
-            # --- PURCHASE (GRN BASED) INVOICE ---
-            st.divider()
-            st.subheader("🧾 Generate GRN Settlement Invoice")
-            if st.button("🖨️ Preview & Print PO Invoice"):
-                c = conn.cursor()
-                c.execute("SELECT v.name, v.contact, v.gstin, p.po_date, p.total_amount FROM po_master p JOIN vendors v ON p.vendor_id = v.id WHERE p.po_id = %s", (po_id,))
-                vendor_info = c.fetchone()
-                
-                c.execute(f"SELECT pr.name, i.rate, COALESCE(i.grn_qty, i.qty), i.total FROM po_items i JOIN products pr ON i.product_id = pr.id WHERE i.po_id = {po_id}")
-                invoice_items = c.fetchall()
-                
-                items_html = ""
-                for idx, item in enumerate(invoice_items):
-                    items_html += f"<tr><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{idx+1}</td><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{item[0]}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{float(item[1]):.2f}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{float(item[2])}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{float(item[3]):.2f}</td></tr>"
-                
-                invoice_html = f"""
-                <div style="font-family: Arial, sans-serif; max-width: 800px; margin: auto; padding: 40px; border: 1px solid #ddd; background-color: #fff; color: #000;">
-                    <h1 style="text-align: center; color: #444; margin-bottom: 5px; font-weight: normal; letter-spacing: 2px;">PURCHASE / GRN INVOICE</h1>
-                    <p style="text-align: center; color: #2e7d32; margin-top: 0; font-size: 18px;"><b>KAMADHENU FARM FRESH PRIVATE LIMITED</b></p>
-                    
-                    <div style="display: flex; justify-content: space-between; margin-top: 30px; font-size: 14px;">
-                        <div style="width: 50%;">
-                            <p style="margin: 0; line-height: 1.5;">
-                                Building No./Flat No.: 1697<br>
-                                Road/Street: 19th Main Road<br>
-                                Locality/Sub Locality: HSR Layout<br>
-                                Bengaluru, Karnataka, 560102<br>
-                                Mobile: +91 9206692624<br>
-                                Email: kamadhenufreshfarms@gmail.com
-                            </p>
-                        </div>
-                        <div style="width: 40%; text-align: left;">
-                            <p style="margin: 0; line-height: 1.5;">
-                                <b>Order #:</b> {selected_po}<br>
-                                <b>Order Date:</b> {vendor_info[3]}
-                            </p>
-                            <div style="margin-top: 15px;">
-                                <b>Vendor Details:</b><br>
-                                {vendor_info[0]}<br>
-                                Ph: {vendor_info[1]}<br>
-                                GSTIN: {vendor_info[2]}
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <table style="width: 100%; border-collapse: collapse; margin-top: 30px; font-size: 14px;">
-                        <thead>
-                            <tr style="background-color: #f2f2f2;">
-                                <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">#</th>
-                                <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Item</th>
-                                <th style="padding: 10px; border: 1px solid #ddd; text-align: right;">Rate / Item</th>
-                                <th style="padding: 10px; border: 1px solid #ddd; text-align: right;">GRN Qty</th>
-                                <th style="padding: 10px; border: 1px solid #ddd; text-align: right;">Amount (₹)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {items_html}
-                        </tbody>
-                    </table>
-                    
-                    <h3 style="text-align: right; margin-top: 15px; color: #333;">Total Payable: ₹{float(vendor_info[4]):,.2f}</h3>
-                    
-                    <div style="display: flex; justify-content: space-between; margin-top: 40px; font-size: 14px;">
-                        <div style="line-height: 1.6;">
-                            <b style="color: #444;">Bank Details:</b><br>
-                            <b>Bank:</b> FEDERAL BANK<br>
-                            <b>Account Holder:</b> KAMADHENU FARM FRESH PRIVATE LIMITED<br>
-                            <b>Account #:</b> 25730200001058<br>
-                            <b>IFSC Code:</b> FDRL0002573
-                        </div>
-                        <div style="text-align: center;">
-                            <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=upi://pay?pa=25730200001058@FDRL0002573.ifsc.npci&pn=Kamadhenu&am={vendor_info[4]}" alt="QR Code">
-                            <div style="font-size: 11px; margin-top: 5px;">Scan to Pay via UPI</div>
-                        </div>
-                    </div>
-                    
-                    <div style="text-align: center; margin-top: 40px;" class="no-print">
-                        <button onclick="window.print()" style="padding: 10px 20px; background-color: #2e7d32; color: white; border: none; cursor: pointer; border-radius: 4px; font-weight: bold; font-size: 16px;">🖨️ Print or Save as PDF</button>
-                        <style>
-                            @media print {{
-                                .no-print {{ display: none !important; }}
-                                body {{ -webkit-print-color-adjust: exact; }}
-                            }}
-                        </style>
-                    </div>
-                </div>
-                """
-                components.html(invoice_html, height=850, scrolling=True)
-                
-        conn.close()
 
     elif sub_menu == "View Purchase Orders":
-        st.header("📋 View & Export Purchase Orders")
+        st.header("📋 View & Export Purchase Orders (True Landing Cost)")
         conn = get_db_connection()
-        
         col1, col2, col3 = st.columns(3)
         start_date = col1.date_input("Start Date", datetime.date.today() - datetime.timedelta(days=30))
         end_date = col2.date_input("End Date", datetime.date.today())
@@ -542,60 +478,56 @@ elif main_menu == "Purchase":
         vendor_list = ["All Vendors"] + vendors_df['name'].tolist()
         selected_vendor = col3.selectbox("Filter by Vendor", vendor_list)
         
-        query = f"SELECT p.po_number as \"PO Number\", p.po_date as \"Date\", v.name as \"Vendor\", p.total_amount as \"Total (Rs)\", p.status as \"Status\" FROM po_master p JOIN vendors v ON p.vendor_id = v.id WHERE p.po_date BETWEEN %s AND %s"
+        query = """
+            SELECT 
+                p.po_number as "PO Number", 
+                p.po_date as "Date", 
+                v.name as "Vendor", 
+                p.total_amount as "Product Total (Rs)", 
+                COALESCE((SELECT SUM(amount) FROM order_expenses WHERE order_ref = p.po_number), 0) as "PO Expenses (Rs)",
+                (p.total_amount + COALESCE((SELECT SUM(amount) FROM order_expenses WHERE order_ref = p.po_number), 0)) as "True Landing Cost (Rs)"
+            FROM po_master p 
+            JOIN vendors v ON p.vendor_id = v.id 
+            WHERE p.po_date BETWEEN %s AND %s
+        """
         params = [str(start_date), str(end_date)]
-        
         if selected_vendor != "All Vendors":
             query += " AND v.name = %s"
             params.append(selected_vendor)
-            
         query += " ORDER BY p.po_id DESC"
         
         po_df = pd.read_sql_query(query, conn, params=params)
         
         if po_df.empty:
-            st.info("No Purchase Orders found for the selected dates and vendor.")
+            st.info("No Purchase Orders found.")
         else:
             st.dataframe(po_df, use_container_width=True, hide_index=True)
-            
             csv = po_df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Download List as CSV",
-                data=csv,
-                file_name=f"Purchase_Orders_{start_date}_to_{end_date}.csv",
-                mime="text/csv",
-                type="primary"
-            )
+            st.download_button(label="📥 Download List as CSV", data=csv, file_name="Purchase_Orders.csv", mime="text/csv", type="primary")
             
             st.divider()
             st.subheader("🔍 View PO Detailed Items")
             selected_po_view = st.selectbox("Select a PO Number to view inside details", po_df["PO Number"].tolist())
-            
             if selected_po_view:
-                items_query = f"""
+                items_query = """
                 SELECT pr.name as "Product", i.qty as "Indent Qty", i.grn_qty as "GRN Qty", i.rate as "Rate (Rs)", i.total as "Total Amount (Rs)" 
-                FROM po_items i 
-                JOIN products pr ON i.product_id = pr.id 
-                JOIN po_master p ON i.po_id = p.po_id 
-                WHERE p.po_number = %s
+                FROM po_items i JOIN products pr ON i.product_id = pr.id JOIN po_master p ON i.po_id = p.po_id WHERE p.po_number = %s
                 """
                 items_df = pd.read_sql_query(items_query, conn, params=[selected_po_view])
                 st.write(f"**Items inside {selected_po_view}:**")
                 st.dataframe(items_df, use_container_width=True, hide_index=True)
-                
         conn.close()
 
 # ==========================================
-# 3. SALES MODULE
+# 3. SALES MODULE (BATCH TRACKING ENABLED)
 # ==========================================
 elif main_menu == "Sales":
     if sub_menu == "Create Sales Order":
-        st.header("Punch Sales Order")
+        st.header("Punch Sales Order (From Specific PO Batches)")
         if 'so_cart' not in st.session_state: st.session_state.so_cart = []
         conn = get_db_connection()
         clients = pd.read_sql_query("SELECT id, name FROM clients", conn)
         products = pd.read_sql_query("SELECT id, name, tax_rate, default_price FROM products", conn)
-        conn.close()
         
         if not clients.empty and not products.empty:
             col1, col2, col3 = st.columns(3)
@@ -604,21 +536,52 @@ elif main_menu == "Sales":
             so_date = col2.date_input("Sales Date")
             delivery_date = col3.date_input("Delivery Date")
             st.divider()
+            
             with st.form("add_so_item_form"):
-                c1, c2, c3 = st.columns(3)
+                st.markdown("#### 1. Select Product")
                 prod_dict = {row['id']: f"SKU{int(row['id']):03d} - {row['name']} ({row['tax_rate']}% GST)" for _, row in products.iterrows()}
-                selected_prod_id = c1.selectbox("Select Product", options=list(prod_dict.keys()), format_func=lambda x: prod_dict[x])
-                suggested_price = float(products.loc[products['id'] == selected_prod_id, 'default_price'].values[0])
-                qty = c2.number_input("Order Quantity", min_value=1.0, value=1.0, step=1.0)
-                rate = c3.number_input("Rate per unit (Rs)", min_value=0.0, value=float(suggested_price), step=10.0)
-                if st.form_submit_button("➕ Click to Add Item"):
+                selected_prod_id = st.selectbox("Select Product", options=list(prod_dict.keys()), format_func=lambda x: prod_dict[x])
+                
+                c = conn.cursor()
+                c.execute("""
+                    SELECT 
+                        i.batch_no, 
+                        SUM(i.qty_in) - SUM(i.qty_out) as available_qty, 
+                        v.name as vendor_name, 
+                        pi.rate as avg_cost
+                    FROM inventory_ledger i
+                    LEFT JOIN po_master pm ON i.batch_no = 'BATCH-' || pm.po_number
+                    LEFT JOIN vendors v ON pm.vendor_id = v.id
+                    LEFT JOIN po_items pi ON pm.po_id = pi.po_id AND i.product_id = pi.product_id
+                    WHERE i.product_id = %s AND i.batch_no LIKE 'BATCH-%%'
+                    GROUP BY i.batch_no, v.name, pi.rate
+                    HAVING SUM(i.qty_in) - SUM(i.qty_out) > 0
+                """, (int(selected_prod_id),))
+                available_batches = c.fetchall()
+                
+                st.markdown("#### 2. Select Vendor Supply Batch")
+                if not available_batches:
+                    st.error("❌ No stock available from any Vendor for this product. Punch a Purchase Order first.")
+                    batch_selected = None
+                else:
+                    batch_dict = {b[0]: f"{b[0]} | Vendor: {b[2]} | Available: {b[1]} | PO Rate: ₹{b[3]}" for b in available_batches}
+                    batch_selected = st.selectbox("Link to specific Vendor Supply Batch", options=list(batch_dict.keys()), format_func=lambda x: batch_dict[x])
+                    max_available = next((float(b[1]) for b in available_batches if b[0] == batch_selected), 1.0)
+                    
+                    c1, c2 = st.columns(2)
+                    suggested_price = float(products.loc[products['id'] == selected_prod_id, 'default_price'].values[0])
+                    qty = c1.number_input("Order Quantity", min_value=1.0, max_value=float(max_available), value=1.0, step=1.0)
+                    rate = c2.number_input("Selling Rate per unit (Rs)", min_value=0.0, value=float(suggested_price), step=10.0)
+                    
+                if st.form_submit_button("➕ Click to Add Item") and batch_selected:
                     tax_rate = float(products.loc[products['id'] == selected_prod_id, 'tax_rate'].values[0])
                     base_total = float(qty * rate)
                     gst_amount = float(base_total * (tax_rate / 100))
                     
                     st.session_state.so_cart.append({
                         "prod_id": int(selected_prod_id), 
-                        "Product": str(prod_dict[selected_prod_id]), 
+                        "Product": str(prod_dict[selected_prod_id]),
+                        "Batch Ref": str(batch_selected),
                         "Order Qty": float(qty), 
                         "Rate": float(rate), 
                         "GST Rs": float(gst_amount), 
@@ -630,7 +593,6 @@ elif main_menu == "Sales":
                 cart_df = pd.DataFrame(st.session_state.so_cart)
                 st.dataframe(cart_df.drop(columns=['prod_id']), use_container_width=True, hide_index=True)
                 if st.button("💾 Save Sales Order", type="primary"):
-                    conn = get_db_connection()
                     c = conn.cursor()
                     c.execute("SELECT COUNT(*) FROM so_master")
                     so_number = f"SO-{(c.fetchone()[0] + 1):04d}"
@@ -642,14 +604,15 @@ elif main_menu == "Sales":
                     for item in st.session_state.so_cart:
                         c.execute("INSERT INTO so_items (so_id, product_id, qty, rate, gst_amount, total) VALUES (%s, %s, %s, %s, %s, %s)", 
                                   (new_so_id, int(item['prod_id']), float(item['Order Qty']), float(item['Rate']), float(item['GST Rs']), float(item['Total Rs'])))
-                        c.execute("INSERT INTO inventory_ledger (product_id, batch_no, qty_in, qty_out, ref_type, ref_id, txn_date) VALUES (%s, 'AUTO', 0, %s, 'Sale', %s, %s)", 
-                                  (int(item['prod_id']), float(item['Order Qty']), str(so_number), str(so_date)))
+                        c.execute("INSERT INTO inventory_ledger (product_id, batch_no, qty_in, qty_out, ref_type, ref_id, txn_date) VALUES (%s, %s, 0, %s, 'Sale', %s, %s)", 
+                                  (int(item['prod_id']), str(item['Batch Ref']), float(item['Order Qty']), str(so_number), str(so_date)))
                     conn.commit()
                     conn.close()
                     st.session_state.so_cart = []
-                    st.success(f"Generated {so_number}!")
+                    st.success(f"Generated {so_number} linked to Vendor Batches!")
                     time.sleep(1)
                     st.rerun()
+        conn.close()
 
     elif sub_menu == "Sales Records & Tracking":
         st.header("Update Sales Orders (Dispatch & Returns)")
@@ -670,6 +633,7 @@ elif main_menu == "Sales":
                 for index, row in edited_so_df.iterrows():
                     item_id = int(row['item_id'])
                     rec_qty = float(row['Client_Received_Qty'])
+                    rej_qty = float(row['Rejected_Qty'])
                     
                     c.execute("SELECT product_id, rate FROM so_items WHERE item_id = %s", (item_id,))
                     prod_data = c.fetchone()
@@ -685,7 +649,7 @@ elif main_menu == "Sales":
                     new_grand_total += item_total
                     
                     c.execute("UPDATE so_items SET dispatch_qty = %s, received_qty = %s, rejected_qty = %s, gst_amount = %s, total = %s WHERE item_id = %s", 
-                              (float(row['Dispatch_Qty']), rec_qty, float(row['Rejected_Qty']), float(gst_amount), float(item_total), item_id))
+                              (float(row['Dispatch_Qty']), rec_qty, rej_qty, float(gst_amount), float(item_total), item_id))
                               
                     c.execute("UPDATE inventory_ledger SET qty_out = %s WHERE ref_type = 'Sale' AND ref_id = %s AND product_id = %s", 
                               (rec_qty, str(selected_so), prod_id))
@@ -695,101 +659,10 @@ elif main_menu == "Sales":
                 st.success(f"Tracking quantities, inventory, and financials updated for {selected_so}!")
                 time.sleep(1)
                 st.rerun()
-                
-            # --- SALES (CLIENT RECEIVED BASED) INVOICE ---
-            st.divider()
-            st.subheader("🧾 Generate Professional Invoice")
-            if st.button("🖨️ Preview & Print Invoice"):
-                c = conn.cursor()
-                c.execute("SELECT c.name, c.contact, c.gstin, s.so_date, s.total_amount FROM so_master s JOIN clients c ON s.client_id = c.id WHERE s.so_id = %s", (so_id,))
-                client_info = c.fetchone()
-                
-                c.execute(f"SELECT p.name, i.rate, COALESCE(i.received_qty, i.qty), i.total FROM so_items i JOIN products p ON i.product_id = p.id WHERE i.so_id = {so_id}")
-                invoice_items = c.fetchall()
-                
-                items_html = ""
-                for idx, item in enumerate(invoice_items):
-                    items_html += f"<tr><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{idx+1}</td><td style='padding:10px; border:1px solid #ddd; text-align:left;'>{item[0]}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{float(item[1]):.2f}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{float(item[2])}</td><td style='padding:10px; border:1px solid #ddd; text-align:right;'>{float(item[3]):.2f}</td></tr>"
-                
-                invoice_html = f"""
-                <div style="font-family: Arial, sans-serif; max-width: 800px; margin: auto; padding: 40px; border: 1px solid #ddd; background-color: #fff; color: #000;">
-                    <h1 style="text-align: center; color: #444; margin-bottom: 5px; font-weight: normal; letter-spacing: 2px;">INVOICE</h1>
-                    <p style="text-align: center; color: #2e7d32; margin-top: 0; font-size: 18px;"><b>KAMADHENU FARM FRESH PRIVATE LIMITED</b></p>
-                    
-                    <div style="display: flex; justify-content: space-between; margin-top: 30px; font-size: 14px;">
-                        <div style="width: 50%;">
-                            <p style="margin: 0; line-height: 1.5;">
-                                Building No./Flat No.: 1697<br>
-                                Road/Street: 19th Main Road<br>
-                                Locality/Sub Locality: HSR Layout<br>
-                                Bengaluru, Karnataka, 560102<br>
-                                Mobile: +91 9206692624<br>
-                                Email: kamadhenufreshfarms@gmail.com
-                            </p>
-                        </div>
-                        <div style="width: 40%; text-align: left;">
-                            <p style="margin: 0; line-height: 1.5;">
-                                <b>Invoice #:</b> {selected_so}<br>
-                                <b>Invoice Date:</b> {client_info[3]}
-                            </p>
-                            <div style="margin-top: 15px;">
-                                <b>Customer Details:</b><br>
-                                {client_info[0]}<br>
-                                Ph: {client_info[1]}<br>
-                                GSTIN: {client_info[2]}
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <table style="width: 100%; border-collapse: collapse; margin-top: 30px; font-size: 14px;">
-                        <thead>
-                            <tr style="background-color: #f2f2f2;">
-                                <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">#</th>
-                                <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Item</th>
-                                <th style="padding: 10px; border: 1px solid #ddd; text-align: right;">Rate / Item</th>
-                                <th style="padding: 10px; border: 1px solid #ddd; text-align: right;">Received Qty</th>
-                                <th style="padding: 10px; border: 1px solid #ddd; text-align: right;">Amount (₹)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {items_html}
-                        </tbody>
-                    </table>
-                    
-                    <h3 style="text-align: right; margin-top: 15px; color: #333;">Total Payable: ₹{float(client_info[4]):,.2f}</h3>
-                    
-                    <div style="display: flex; justify-content: space-between; margin-top: 40px; font-size: 14px;">
-                        <div style="line-height: 1.6;">
-                            <b style="color: #444;">Bank Details:</b><br>
-                            <b>Bank:</b> FEDERAL BANK<br>
-                            <b>Account Holder:</b> KAMADHENU FARM FRESH PRIVATE LIMITED<br>
-                            <b>Account #:</b> 25730200001058<br>
-                            <b>IFSC Code:</b> FDRL0002573
-                        </div>
-                        <div style="text-align: center;">
-                            <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=upi://pay?pa=25730200001058@FDRL0002573.ifsc.npci&pn=Kamadhenu&am={client_info[4]}" alt="QR Code">
-                            <div style="font-size: 11px; margin-top: 5px;">Scan to Pay via UPI</div>
-                        </div>
-                    </div>
-                    
-                    <div style="text-align: center; margin-top: 40px;" class="no-print">
-                        <button onclick="window.print()" style="padding: 10px 20px; background-color: #2e7d32; color: white; border: none; cursor: pointer; border-radius: 4px; font-weight: bold; font-size: 16px;">🖨️ Print or Save as PDF</button>
-                        <style>
-                            @media print {{
-                                .no-print {{ display: none !important; }}
-                                body {{ -webkit-print-color-adjust: exact; }}
-                            }}
-                        </style>
-                    </div>
-                </div>
-                """
-                components.html(invoice_html, height=850, scrolling=True)
-        conn.close()
 
     elif sub_menu == "View Sales Orders":
         st.header("📋 View & Export Sales Orders")
         conn = get_db_connection()
-        
         col1, col2, col3 = st.columns(3)
         start_date = col1.date_input("Start Date", datetime.date.today() - datetime.timedelta(days=30))
         end_date = col2.date_input("End Date", datetime.date.today())
@@ -798,329 +671,199 @@ elif main_menu == "Sales":
         client_list = ["All Clients"] + clients_df['name'].tolist()
         selected_client = col3.selectbox("Filter by Client", client_list)
         
-        query = f"SELECT s.so_number as \"SO Number\", s.so_date as \"Date\", c.name as \"Client\", s.total_amount as \"Total (Rs)\", s.status as \"Status\" FROM so_master s JOIN clients c ON s.client_id = c.id WHERE s.so_date BETWEEN %s AND %s"
+        query = """
+            SELECT 
+                s.so_number as "SO Number", 
+                s.so_date as "Date", 
+                c.name as "Client", 
+                s.total_amount as "Order Total (Rs)", 
+                COALESCE((SELECT SUM(amount) FROM order_expenses WHERE order_ref = s.so_number), 0) as "SO Expenses (Rs)",
+                s.status as "Status" 
+            FROM so_master s 
+            JOIN clients c ON s.client_id = c.id 
+            WHERE s.so_date BETWEEN %s AND %s
+        """
         params = [str(start_date), str(end_date)]
-        
         if selected_client != "All Clients":
             query += " AND c.name = %s"
             params.append(selected_client)
-            
         query += " ORDER BY s.so_id DESC"
         
         so_df = pd.read_sql_query(query, conn, params=params)
         
         if so_df.empty:
-            st.info("No Sales Orders found for the selected dates and client.")
+            st.info("No Sales Orders found.")
         else:
             st.dataframe(so_df, use_container_width=True, hide_index=True)
-            
             csv = so_df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Download List as CSV",
-                data=csv,
-                file_name=f"Sales_Orders_{start_date}_to_{end_date}.csv",
-                mime="text/csv",
-                type="primary"
-            )
+            st.download_button(label="📥 Download List as CSV", data=csv, file_name="Sales_Orders.csv", mime="text/csv", type="primary")
             
             st.divider()
             st.subheader("🔍 View SO Detailed Items")
             selected_so_view = st.selectbox("Select a SO Number to view inside details", so_df["SO Number"].tolist())
-            
             if selected_so_view:
-                items_query = f"""
+                items_query = """
                 SELECT p.name as "Product", i.qty as "Order Qty", i.received_qty as "Client Received Qty", i.rate as "Rate (Rs)", i.total as "Total Amount (Rs)" 
-                FROM so_items i 
-                JOIN products p ON i.product_id = p.id 
-                JOIN so_master s ON i.so_id = s.so_id 
-                WHERE s.so_number = %s
+                FROM so_items i JOIN products p ON i.product_id = p.id JOIN so_master s ON i.so_id = s.so_id WHERE s.so_number = %s
                 """
                 items_df = pd.read_sql_query(items_query, conn, params=[selected_so_view])
                 st.write(f"**Items inside {selected_so_view}:**")
                 st.dataframe(items_df, use_container_width=True, hide_index=True)
-                
         conn.close()
 
 # ==========================================
-# 4. INVENTORY MODULE
+# 4. INVENTORY & WASTAGE MODULE
 # ==========================================
 elif main_menu == "Inventory":
     if sub_menu == "Live Stock":
-        st.header("📦 Live Stock Tracker")
+        st.header("📦 Live Stock Tracker (Batch Wise)")
         conn = get_db_connection()
-        stock_df = pd.read_sql_query('SELECT p.id as "SKU ID", p.name as "Product Name", p.category as "Category", COALESCE(SUM(i.qty_in), 0) - COALESCE(SUM(i.qty_out), 0) as "Current Stock" FROM products p LEFT JOIN inventory_ledger i ON p.id = i.product_id GROUP BY p.id', conn)
+        stock_df = pd.read_sql_query('SELECT p.id as "SKU ID", p.name as "Product Name", i.batch_no as "Batch Ref", COALESCE(SUM(i.qty_in), 0) - COALESCE(SUM(i.qty_out), 0) as "Current Stock" FROM products p LEFT JOIN inventory_ledger i ON p.id = i.product_id GROUP BY p.id, p.name, i.batch_no HAVING COALESCE(SUM(i.qty_in), 0) - COALESCE(SUM(i.qty_out), 0) > 0', conn)
         if not stock_df.empty:
             stock_df['SKU ID'] = stock_df['SKU ID'].apply(lambda x: f"SKU{int(x):03d}")
             st.dataframe(stock_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No active stock available.")
         conn.close()
+        
+    elif sub_menu == "Log Wastage & Spoilage":
+        st.header("🗑️ Log Stock Wastage")
+        st.write("Write off spoiled inventory directly against the Vendor's PO Batch to ensure accurate P&L.")
+        conn = get_db_connection()
+        stock_df = pd.read_sql_query('SELECT p.id, p.name, i.batch_no, COALESCE(SUM(i.qty_in), 0) - COALESCE(SUM(i.qty_out), 0) as available_qty FROM products p JOIN inventory_ledger i ON p.id = i.product_id GROUP BY p.id, p.name, i.batch_no HAVING COALESCE(SUM(i.qty_in), 0) - COALESCE(SUM(i.qty_out), 0) > 0', conn)
+        
+        if stock_df.empty:
+            st.info("No stock available to write off.")
+        else:
+            with st.form("wastage_form"):
+                batch_dict = {f"{row['id']}_{row['batch_no']}": f"{row['name']} | Batch: {row['batch_no']} | Available: {row['available_qty']}" for _, row in stock_df.iterrows()}
+                selected_val = st.selectbox("Select Product Batch", options=list(batch_dict.keys()), format_func=lambda x: batch_dict[x])
+                
+                c1, c2 = st.columns(2)
+                w_qty = c1.number_input("Wastage Quantity to Write-Off", min_value=1.0, step=1.0)
+                w_reason = c2.selectbox("Reason", ["Transit Damage", "Rot / Spoilage", "Quality Rejection", "Lost/Stolen"])
+                
+                if st.form_submit_button("Write Off Stock"):
+                    prod_id, batch_no = selected_val.split("_")
+                    c = conn.cursor()
+                    
+                    # Add to Wastage Ledger
+                    c.execute("INSERT INTO wastage_ledger (product_id, batch_no, qty, reason, log_date) VALUES (%s, %s, %s, %s, %s)", 
+                              (int(prod_id), str(batch_no), float(w_qty), str(w_reason), str(datetime.date.today())))
+                    
+                    # Deduct from Inventory
+                    c.execute("INSERT INTO inventory_ledger (product_id, batch_no, qty_in, qty_out, ref_type, ref_id, txn_date) VALUES (%s, %s, 0, %s, 'Wastage', 'WRITE-OFF', %s)", 
+                              (int(prod_id), str(batch_no), float(w_qty), str(datetime.date.today())))
+                              
+                    conn.commit()
+                    st.success(f"Wastage recorded! {w_qty} units written off.")
+                    time.sleep(1)
+                    st.rerun()
+        conn.close()
+        
     elif sub_menu == "Ledger History":
         st.header("Inventory Ledger")
         conn = get_db_connection()
-        ledger_df = pd.read_sql_query('SELECT i.txn_date as "Date", p.name as "Product", i.ref_type as "Type", i.ref_id as "Reference", i.qty_in as "Qty IN", i.qty_out as "Qty OUT" FROM inventory_ledger i JOIN products p ON i.product_id = p.id ORDER BY i.ledger_id DESC', conn)
+        ledger_df = pd.read_sql_query('SELECT i.txn_date as "Date", p.name as "Product", i.batch_no as "Batch Ref", i.ref_type as "Type", i.ref_id as "Reference", i.qty_in as "Qty IN", i.qty_out as "Qty OUT" FROM inventory_ledger i JOIN products p ON i.product_id = p.id ORDER BY i.ledger_id DESC', conn)
         if not ledger_df.empty: st.dataframe(ledger_df, use_container_width=True, hide_index=True)
         conn.close()
 
 # ==========================================
-# 5. FINANCE MODULE 
+# 6. LOGISTICS, EXPENSES & OPS
 # ==========================================
-elif main_menu == "Finance":
-    if sub_menu == "Add Payment":
-        st.header("💸 Record Order-Wise Payment")
-        party_type = st.radio("Who are you transacting with?", ["Client (Receiving Money)", "Vendor (Paying Money)"])
+elif main_menu == "Logistics & Ops":
+    if sub_menu == "Add PO/SO Expenses":
+        st.header("💸 Add Order-Level Expenses (True Landing Cost)")
+        st.write("Add freight, loading, or packing costs directly to a specific Purchase Order or Sales Order.")
+        
         conn = get_db_connection()
-        if "Client" in party_type:
-            parties = pd.read_sql_query("SELECT id, name FROM clients", conn)
-            db_party_type = "Client"
-            prefix = "S-"
+        channel = st.radio("Select Order Type", ["Purchase Orders (PO)", "Sales Orders (SO)"])
+        
+        if "Purchase" in channel:
+            orders_df = pd.read_sql_query("SELECT po_number as order_no FROM po_master", conn)
         else:
-            parties = pd.read_sql_query("SELECT id, name FROM vendors", conn)
-            db_party_type = "Vendor"
-            prefix = "V"
+            orders_df = pd.read_sql_query("SELECT so_number as order_no FROM so_master", conn)
             
-        if parties.empty: st.warning(f"No {db_party_type}s found.")
-        else:
-            party_dict = {row['id']: f"{prefix}{int(row['id']):03d} - {row['name']}" for _, row in parties.iterrows()}
-            selected_party = st.selectbox("Select Party", options=list(party_dict.keys()), format_func=lambda x: party_dict[x])
-            if db_party_type == "Vendor":
-                orders_query = f"SELECT p.po_number as order_no, ROUND(CAST(p.total_amount - COALESCE((SELECT SUM(amount) FROM payments WHERE order_no = p.po_number), 0) AS NUMERIC), 2) as pending_amount FROM po_master p WHERE p.vendor_id = {selected_party} AND ROUND(CAST(p.total_amount - COALESCE((SELECT SUM(amount) FROM payments WHERE order_no = p.po_number), 0) AS NUMERIC), 2) > 0.01"
-            else:
-                orders_query = f"SELECT s.so_number as order_no, ROUND(CAST(s.total_amount - COALESCE((SELECT SUM(amount) FROM payments WHERE order_no = s.so_number), 0) AS NUMERIC), 2) as pending_amount FROM so_master s WHERE s.client_id = {selected_party} AND ROUND(CAST(s.total_amount - COALESCE((SELECT SUM(amount) FROM payments WHERE order_no = s.so_number), 0) AS NUMERIC), 2) > 0.01"
-            orders_df = pd.read_sql_query(orders_query, conn)
-            if orders_df.empty:
-                st.success(f"✅ All bills for {party_dict[selected_party]} are fully paid!")
-            else:
-                st.info(f"📌 Found {len(orders_df)} unpaid bill(s) remaining for {party_dict[selected_party]}.")
-                col1, col2 = st.columns(2)
-                order_list = orders_df['order_no'].tolist()
-                selected_order = col1.selectbox("Select Pending Bill/Order to Pay", order_list)
-                pending_amount = orders_df.loc[orders_df['order_no'] == selected_order, 'pending_amount'].values[0]
-                pay_date = col2.date_input("Payment Date", datetime.date.today())
-                amount = col1.number_input("Amount (Rs)", min_value=0.0, value=float(pending_amount), step=10.0)
-                pay_mode = col2.selectbox("Payment Mode", ["UPI", "Bank Transfer (NEFT/RTGS)", "Cash", "Cheque"])
-                utr_no = col1.text_input("UTR / Transaction Ref Number *")
-                notes = col2.text_input("Notes")
-                if st.button("💾 Save & Mark as Paid", type="primary"):
-                    if utr_no or pay_mode == "Cash":
-                        c = conn.cursor()
-                        c.execute("INSERT INTO payments (party_type, party_id, order_no, amount, payment_mode, utr_number, txn_date, notes) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", (str(db_party_type), int(selected_party), str(selected_order), float(amount), str(pay_mode), str(utr_no), str(pay_date), str(notes)))
-                        conn.commit()
-                        st.success(f"✅ SUCCESS! Payment of Rs {amount} saved for {selected_order}.")
-                        time.sleep(1.5)
-                        st.rerun()
-                    else: st.error("UTR / Reference number is required for Bank/UPI transactions.")
-        conn.close()
-                    
-    elif sub_menu == "Receivables (Client Bills)":
-        st.header("📈 Client Receivables (Bill-wise)")
-        conn = get_db_connection()
-        query = 'SELECT s.so_number as "Sales Order", c.name as "Client", s.so_date as "Date", s.total_amount as "Bill Amount (Rs)", COALESCE((SELECT SUM(amount) FROM payments WHERE order_no = s.so_number), 0) as "Paid Amount (Rs)" FROM so_master s JOIN clients c ON s.client_id = c.id ORDER BY s.so_id DESC'
-        df = pd.read_sql_query(query, conn)
-        if not df.empty:
-            df['Balance (Rs)'] = (df['Bill Amount (Rs)'] - df['Paid Amount (Rs)']).astype(float).round(2)
-            df['Status'] = df['Balance (Rs)'].apply(lambda x: '✅ Payment Made' if x <= 0.01 else '⏳ Pending')
-            utr_df = pd.read_sql_query("SELECT order_no, string_agg(utr_number, ', ') as UTRs FROM payments GROUP BY order_no", conn)
-            df = df.merge(utr_df, left_on='Sales Order', right_on='order_no', how='left').drop(columns=['order_no'])
-            df['UTRs'] = df['utrs'].fillna('-')
-            df.drop(columns=['utrs'], inplace=True, errors='ignore')
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        else: st.info("No Sales Orders found.")
-        conn.close()
-            
-    elif sub_menu == "Payables (Vendor Bills)":
-        st.header("📉 Vendor Payables (Bill-wise)")
-        conn = get_db_connection()
-        query = 'SELECT p.po_number as "Purchase Order", v.name as "Vendor", p.po_date as "Date", p.total_amount as "Bill Amount (Rs)", COALESCE((SELECT SUM(amount) FROM payments WHERE order_no = p.po_number), 0) as "Paid Amount (Rs)" FROM po_master p JOIN vendors v ON p.vendor_id = v.id ORDER BY p.po_id DESC'
-        df = pd.read_sql_query(query, conn)
-        if not df.empty:
-            df['Balance (Rs)'] = (df['Bill Amount (Rs)'] - df['Paid Amount (Rs)']).astype(float).round(2)
-            df['Status'] = df['Balance (Rs)'].apply(lambda x: '✅ Payment Made' if x <= 0.01 else '⏳ Pending')
-            utr_df = pd.read_sql_query("SELECT order_no, string_agg(utr_number, ', ') as UTRs FROM payments GROUP BY order_no", conn)
-            df = df.merge(utr_df, left_on='Purchase Order', right_on='order_no', how='left').drop(columns=['order_no'])
-            df['UTRs'] = df['utrs'].fillna('-')
-            df.drop(columns=['utrs'], inplace=True, errors='ignore')
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        else: st.info("No Purchase Orders found.")
-        conn.close()
-
-    elif sub_menu == "Payment Records (Edit/Delete)":
-        st.header("Payment History")
-        conn = get_db_connection()
-        payments_df = pd.read_sql_query('SELECT id, txn_date as "Date", party_type as "Type", order_no as "Order Ref", amount as "Amount (Rs)", payment_mode as "Mode", utr_number as "UTR" FROM payments ORDER BY id DESC', conn)
-        show_data_with_delete("payments", payments_df, "PAY-")
-        conn.close()
-
-# ==========================================
-# 6. LOGISTICS MODULE
-# ==========================================
-elif main_menu == "Logistics":
-    if sub_menu == "Add Dispatch Details":
-        st.header("🚚 Add Dispatch & Freight Details")
-        channel = st.radio("Select Channel", ["Purchase (Inbound Pick up)", "Sales (Outbound Dispatch)"])
-        conn = get_db_connection()
-        if "Purchase" in channel: orders_df = pd.read_sql_query("SELECT po_number as order_no FROM po_master", conn)
-        else: orders_df = pd.read_sql_query("SELECT so_number as order_no FROM so_master", conn)
         all_orders = orders_df['order_no'].tolist()
         
-        if not all_orders: st.warning(f"No orders found for {channel}. Create an order first.")
+        if not all_orders: st.warning("No orders found. Create an order first.")
         else:
-            with st.form("logistics_form"):
+            with st.form("expense_form"):
                 col1, col2 = st.columns(2)
-                order_ref = col1.selectbox("Select Order Reference", all_orders)
-                driver_name = col2.text_input("Driver Name")
-                vehicle_no = col1.text_input("Vehicle Number (e.g., KA-01-AB-1234) *")
-                from_loc = col2.text_input("From Location *")
-                to_loc = col1.text_input("To (Destination) *")
-                dist = col2.number_input("Distance (KM)", min_value=0.0, step=1.0)
-                freight = col1.number_input("Total Freight Cost (Rs)", min_value=0.0, step=100.0)
-                if st.form_submit_button("💾 Save Logistics Details"):
-                    if vehicle_no and from_loc and to_loc:
+                order_ref = col1.selectbox("Select Order Number", all_orders)
+                expense_type = col2.selectbox("Expense Type", ["Freight / Transport", "Loading / Unloading", "Packaging Material", "Tolls / Challans", "Other"])
+                amount = col1.number_input("Expense Amount (Rs) *", min_value=0.0, step=100.0)
+                notes = col2.text_input("Notes / Driver Details")
+                
+                if st.form_submit_button("💾 Save Expense to Order"):
+                    if amount > 0:
                         c = conn.cursor()
-                        c.execute("INSERT INTO logistics (order_ref, from_loc, to_loc, vehicle_no, driver_name, distance_km, freight_cost) VALUES (%s, %s, %s, %s, %s, %s, %s)", (str(order_ref), str(from_loc), str(to_loc), str(vehicle_no), str(driver_name), float(dist), float(freight)))
+                        c.execute("INSERT INTO order_expenses (order_ref, expense_type, amount, notes, logged_date) VALUES (%s, %s, %s, %s, %s)", 
+                                  (str(order_ref), str(expense_type), float(amount), str(notes), str(datetime.date.today())))
                         conn.commit()
-                        st.success(f"✅ Logistics details saved for {order_ref}!")
+                        st.success(f"✅ ₹{amount} added to {order_ref}'s landing cost!")
                         time.sleep(1.5)
                         st.rerun()
-                    else: st.error("Vehicle No, From, and To locations are mandatory.")
-        conn.close()
-        
-    elif sub_menu == "Route & Freight Report":
-        st.header("🗺️ Route & Freight Cost Analysis")
-        conn = get_db_connection()
-        query = 'SELECT l.order_ref as "Order Ref", l.from_loc || \' ➡️ \' || l.to_loc as "Route", l.vehicle_no as "Vehicle", l.driver_name as "Driver", l.distance_km as "Distance (KM)", l.freight_cost as "Freight (Rs)" FROM logistics l ORDER BY l.id DESC'
-        log_df = pd.read_sql_query(query, conn)
-        if not log_df.empty:
-            po_qtys = pd.read_sql_query("SELECT p.po_number as order_no, SUM(i.qty) as total_qty FROM po_master p JOIN po_items i ON p.po_id = i.po_id GROUP BY p.po_id", conn)
-            so_qtys = pd.read_sql_query("SELECT s.so_number as order_no, SUM(i.qty) as total_qty FROM so_master s JOIN so_items i ON s.so_id = i.so_id GROUP BY s.so_id", conn)
-            all_qtys = pd.concat([po_qtys, so_qtys]).set_index('order_no')
-            def get_cost_per_kg(row):
-                order = row['Order Ref']
-                freight = row['Freight (Rs)']
-                if order in all_qtys.index and freight > 0:
-                    qty = all_qtys.loc[order, 'total_qty']
-                    if qty > 0: return round(freight / qty, 2)
-                return 0.0
-            log_df['Cost per Kg/Crate (Rs)'] = log_df.apply(get_cost_per_kg, axis=1)
-            st.dataframe(log_df, use_container_width=True, hide_index=True)
-            st.subheader("Total Freight Spent by Route")
-            route_summary = log_df.groupby('Route')['Freight (Rs)'].sum().reset_index()
-            st.bar_chart(route_summary.set_index('Route'))
-        else: st.info("No logistics records found.")
+                    else: st.error("Amount must be greater than 0.")
         conn.close()
 
 # ==========================================
 # 7. DASHBOARD & SYSTEM ADMIN
 # ==========================================
 elif main_menu == "Dashboard":
-    st.header("📊 AI-Powered Business Dashboard")
-    st.markdown("""
-    **Welcome to your Command Center!** 
-    This module combines interactive 3D visualizations, analytical charts, and real-time tracking to give you a multidimensional view of your farm's performance.
-    """)
-    
+    st.header("📊 Executive Command Center")
     conn = get_db_connection()
     
-    # --- 1. ALERTS & INCIDENT PANEL ---
+    # --- 1. THE NUMBER ONE INVESTOR TABLE ---
+    st.markdown("### 👔 Investor & Board Summary (Monthly Run-Rate)")
+    
+    total_rev = pd.read_sql_query("SELECT COALESCE(SUM(total_amount), 0) FROM so_master", conn).iloc[0,0]
+    total_cogs = pd.read_sql_query("SELECT COALESCE(SUM(total_amount), 0) FROM po_master", conn).iloc[0,0]
+    total_logistics_cost = pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM order_expenses", conn).iloc[0,0]
+    
+    # Simple Payroll calculation (Sum of daily wages * 30 days) to get monthly burn
+    monthly_payroll = pd.read_sql_query("SELECT COALESCE(SUM(salary_per_day), 0) * 30 FROM employees WHERE status='Active'", conn).iloc[0,0]
+    
+    total_opex = float(total_logistics_cost) + float(monthly_payroll)
+    net_profit = float(total_rev) - float(total_cogs) - total_opex
+    net_margin = (net_profit / float(total_rev) * 100) if float(total_rev) > 0 else 0.0
+    
+    investor_df = pd.DataFrame([{
+        "Metric": "📈 Gross Revenue", "Value": f"₹ {float(total_rev):,.2f}"
+    }, {
+        "Metric": "🛒 Cost of Goods Sold (Purchases)", "Value": f"₹ {float(total_cogs):,.2f}"
+    }, {
+        "Metric": "🚚 Operational Burn (Freight + Monthly Payroll)", "Value": f"₹ {total_opex:,.2f}"
+    }, {
+        "Metric": "💎 TRUE NET PROFIT", "Value": f"₹ {net_profit:,.2f}"
+    }])
+    st.dataframe(investor_df, use_container_width=True, hide_index=True)
+    st.caption(f"**True Net Margin (After Logistics & Payroll): {net_margin:.1f}%**")
+    st.divider()
+
+    # --- 2. ALERTS PANEL ---
     st.subheader("🚨 System Alerts")
     stock_df = pd.read_sql_query('SELECT p.id as product_id, p.name, COALESCE(SUM(i.qty_in), 0) - COALESCE(SUM(i.qty_out), 0) as current_stock, p.default_price FROM products p LEFT JOIN inventory_ledger i ON p.id = i.product_id GROUP BY p.id, p.name, p.default_price', conn)
     low_stock = stock_df[stock_df['current_stock'] < 50]
-    if not low_stock.empty:
-        st.warning(f"**Low Stock Alert:** {', '.join(low_stock['name'].tolist())} inventory is running below optimal levels.")
-    else:
-        st.success("✅ All inventory levels are optimal. No active incidents.")
+    if not low_stock.empty: st.warning(f"**Low Stock Alert:** {', '.join(low_stock['name'].tolist())} inventory is running below optimal levels.")
+    else: st.success("✅ All inventory levels are optimal. No active incidents.")
 
-    # --- DATA CALCULATION FOR KPIs ---
-    total_sales = pd.read_sql_query("SELECT COALESCE(SUM(total_amount), 0) FROM so_master", conn).iloc[0,0]
-    total_purchases = pd.read_sql_query("SELECT COALESCE(SUM(total_amount), 0) FROM po_master", conn).iloc[0,0]
+    # --- 3. KPI CARDS ---
+    st.subheader("🎯 Operational Indicators")
     total_received = pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM payments WHERE party_type='Client'", conn).iloc[0,0]
     total_paid = pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM payments WHERE party_type='Vendor'", conn).iloc[0,0]
-    
-    pending_receivables = float(total_sales) - float(total_received)
-    pending_payables = float(total_purchases) - float(total_paid)
+    pending_receivables = float(total_rev) - float(total_received)
+    pending_payables = float(total_cogs) - float(total_paid)
     
     total_sku_count = stock_df[stock_df['current_stock'] > 0]['current_stock'].sum()
     stock_df['total_value'] = stock_df['current_stock'] * stock_df['default_price']
     total_inventory_value = stock_df['total_value'].sum()
     
-    overall_pl = float(total_sales) - float(total_purchases)
-    overall_margin = (overall_pl / float(total_sales) * 100) if total_sales > 0 else 0.0
-
-    # SKU Wise P&L Calculation
-    sku_pl_query = """
-        SELECT 
-            p.name as "Product",
-            COALESCE(s.rev, 0) as "Total Revenue",
-            COALESCE(po.cost, 0) as "Total Cost"
-        FROM products p
-        LEFT JOIN (SELECT product_id, SUM(total) as rev FROM so_items GROUP BY product_id) s ON p.id = s.product_id
-        LEFT JOIN (SELECT product_id, SUM(total) as cost FROM po_items GROUP BY product_id) po ON p.id = po.product_id
-        WHERE COALESCE(s.rev, 0) > 0 OR COALESCE(po.cost, 0) > 0
-    """
-    sku_pl_df = pd.read_sql_query(sku_pl_query, conn)
-    sku_pl_df["P&L"] = sku_pl_df["Total Revenue"] - sku_pl_df["Total Cost"]
-    
-    profit_skus = len(sku_pl_df[sku_pl_df["P&L"] > 0])
-    loss_skus = len(sku_pl_df[sku_pl_df["P&L"] < 0])
-
-    # Client Wise P&L Calculation
-    client_pl_query = """
-        WITH avg_cost AS (
-            SELECT product_id, CASE WHEN SUM(grn_qty) > 0 THEN SUM(total)/SUM(grn_qty) ELSE 0 END as cost_per_unit
-            FROM po_items GROUP BY product_id
-        ),
-        client_item_costs AS (
-            SELECT s.client_id, SUM(i.received_qty * COALESCE(ac.cost_per_unit, 0)) as total_cogs
-            FROM so_items i
-            JOIN so_master s ON i.so_id = s.so_id
-            LEFT JOIN avg_cost ac ON i.product_id = ac.product_id
-            GROUP BY s.client_id
-        ),
-        client_revenues AS (
-            SELECT client_id, SUM(total_amount) as total_rev
-            FROM so_master
-            GROUP BY client_id
-        )
-        SELECT 
-            c.name as "Client", 
-            COALESCE(cr.total_rev, 0) as "Total Revenue", 
-            COALESCE(cic.total_cogs, 0) as "Total Cost"
-        FROM clients c
-        JOIN client_revenues cr ON c.id = cr.client_id
-        LEFT JOIN client_item_costs cic ON c.id = cic.client_id
-    """
-    try:
-        client_pl_df = pd.read_sql_query(client_pl_query, conn)
-        client_pl_df["P&L"] = client_pl_df["Total Revenue"] - client_pl_df["Total Cost"]
-    except:
-        client_pl_df = pd.read_sql_query('SELECT c.name as "Client", SUM(s.total_amount) as "Total Revenue", 0 as "Total Cost", SUM(s.total_amount) as "P&L" FROM so_master s JOIN clients c ON s.client_id = c.id GROUP BY c.name', conn)
-
-    # --- 2. KPI CARDS ---
-    st.subheader("🎯 Key Performance Indicators")
-    
-    # ROW 1
-    r1c1, r1c2, r1c3, r1c4 = st.columns(4)
-    r1c1.metric("Total Revenue", f"₹{float(total_sales):,.2f}")
-    r1c2.metric("Total Cost", f"₹{float(total_purchases):,.2f}")
-    r1c3.metric("Overall P&L", f"₹{overall_pl:,.2f}", delta=f"Margin: {overall_margin:.1f}%")
-    r1c4.metric("Pending SKU (Inventory)", f"{total_sku_count:,.0f} Units")
-
-    # ROW 2
-    st.write("") # Spacing
     r2c1, r2c2, r2c3, r2c4 = st.columns(4)
     r2c1.metric("Total Inventory Value", f"₹{total_inventory_value:,.2f}")
     r2c2.metric("Pending Receivables (From Clients)", f"₹{pending_receivables:,.2f}")
     r2c3.metric("Pending Payables (To Vendors)", f"₹{pending_payables:,.2f}")
-    r2c4.metric("SKU Performance Tracker", f"{profit_skus} Profit | {loss_skus} Loss")
-    
-    # --- 3. P&L TABLES ---
-    st.divider()
-    st.subheader("📊 Profit & Loss Breakdown")
-    tab1, tab2 = st.tabs(["SKU-Wise P&L", "Client-Wise P&L"])
-    
-    with tab1:
-        st.dataframe(sku_pl_df.style.format({"Total Revenue": "₹{:,.2f}", "Total Cost": "₹{:,.2f}", "P&L": "₹{:,.2f}"}), use_container_width=True, hide_index=True)
-        
-    with tab2:
-        st.dataframe(client_pl_df.style.format({"Total Revenue": "₹{:,.2f}", "Total Cost": "₹{:,.2f}", "P&L": "₹{:,.2f}"}), use_container_width=True, hide_index=True)
+    r2c4.metric("Pending SKU (Inventory)", f"{total_sku_count:,.0f} Units")
 
     # --- 4. CHARTS (DONUT & BAR) ---
     st.divider()
@@ -1134,36 +877,6 @@ elif main_menu == "Dashboard":
     if not top_products.empty:
         fig_bar = px.bar(top_products, x='Product', y='Volume', title="Top Products by Volume (Bar Chart)", color='Product')
         c2.plotly_chart(fig_bar, use_container_width=True)
-        
-    # --- 5. LINE CHART (TRENDS) & FUNNEL ---
-    c3, c4 = st.columns(2)
-    sales_trend = pd.read_sql_query('SELECT so_date as "Date", SUM(total_amount) as "Revenue" FROM so_master GROUP BY so_date ORDER BY so_date', conn)
-    if not sales_trend.empty:
-        fig_line = px.line(sales_trend, x='Date', y='Revenue', markers=True, title="Revenue Timeline / Trends (Line Chart)")
-        c3.plotly_chart(fig_line, use_container_width=True)
-        
-    funnel_data = pd.DataFrame({
-        'Stage': ['Orders Placed', 'Dispatched', 'Payments Received'],
-        'Count': [
-            pd.read_sql_query("SELECT COUNT(*) FROM so_master", conn).iloc[0,0],
-            pd.read_sql_query("SELECT COUNT(*) FROM logistics WHERE order_ref LIKE 'SO%'", conn).iloc[0,0],
-            pd.read_sql_query("SELECT COUNT(DISTINCT order_no) FROM payments WHERE party_type='Client'", conn).iloc[0,0]
-        ]
-    })
-    if funnel_data['Count'].sum() > 0:
-        fig_funnel = px.funnel(funnel_data, x='Count', y='Stage', title="Sales Process Funnel")
-        c4.plotly_chart(fig_funnel, use_container_width=True)
-
-    # --- 6. 3D CUBE VISUALIZATION ---
-    st.divider()
-    st.subheader("🧊 3D Multidimensional Data Cube")
-    st.markdown("Rotate and zoom this interactive 3D model to analyze the relationship between Order Volume, Pricing, and Total Revenue across your products.")
-    cube_df = pd.read_sql_query('SELECT p.name as "Product", p.category as "Category", i.qty as "Quantity", i.rate as "Rate", i.total as "Total" FROM so_items i JOIN products p ON i.product_id = p.id', conn)
-    if not cube_df.empty and len(cube_df) > 0:
-        fig_3d = px.scatter_3d(cube_df, x='Quantity', y='Rate', z='Total', color='Category', hover_name='Product', size_max=18, title="3D Cube: Volume vs Pricing vs Revenue")
-        st.plotly_chart(fig_3d, use_container_width=True)
-    else:
-        st.info("Punch a few Sales Orders to render the interactive 3D Data Cube!")
     
     conn.close()
 
