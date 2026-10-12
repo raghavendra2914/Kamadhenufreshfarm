@@ -158,7 +158,8 @@ with st.sidebar:
             sac.MenuItem('Purchase', icon='cart3', children=[
                 sac.MenuItem('Create PO', icon='cart-plus'),
                 sac.MenuItem('PO Records & GRN', icon='receipt-cutoff'),
-                sac.MenuItem('View Purchase Orders', icon='table')
+                sac.MenuItem('View Purchase Orders', icon='table'),
+                sac.MenuItem('Purchase Forecasting', icon='graph-up')
             ]),
             sac.MenuItem('Sales', icon='graph-up-arrow', children=[
                 sac.MenuItem('Create Sales Order', icon='cart-check'),
@@ -197,7 +198,7 @@ with st.sidebar:
 parent_map = {
     'Vendor Onboarding': 'Master Data', 'Client Onboarding': 'Master Data', 'Product Master': 'Master Data', 'Facility Onboarding': 'Master Data',
     'Employee Master': 'HR & Payroll',
-    'Create PO': 'Purchase', 'PO Records & GRN': 'Purchase', 'View Purchase Orders': 'Purchase',
+    'Create PO': 'Purchase', 'PO Records & GRN': 'Purchase', 'View Purchase Orders': 'Purchase', 'Purchase Forecasting': 'Purchase',
     'Create Sales Order': 'Sales', 'Sales Records & Tracking': 'Sales', 'View Sales Orders': 'Sales',
     'Live Stock': 'Inventory', 'Ledger History': 'Inventory', 'Log Wastage & Spoilage': 'Inventory',
     'Add Payment': 'Finance', 'Receivables (Client Bills)': 'Finance', 'Payables (Vendor Bills)': 'Finance', 'Payment Records': 'Finance',
@@ -565,6 +566,68 @@ elif main_menu == "Purchase":
                 items_df = pd.read_sql_query(items_query, conn, params=[selected_po_view])
                 st.write(f"**Items inside {selected_po_view}:**")
                 st.dataframe(items_df, use_container_width=True, hide_index=True)
+        conn.close()
+        
+    elif sub_menu == "Purchase Forecasting":
+        st.header("🔮 Purchase Forecasting & Data Analysis")
+        st.write("This engine analyzes your sales velocity over the last 30 days and cross-references it with your current inventory to explicitly tell you what to purchase next week.")
+        
+        conn = get_db_connection()
+        thirty_days_ago = str(datetime.date.today() - datetime.timedelta(days=30))
+        
+        forecast_query = f"""
+            WITH sales_data AS (
+                SELECT i.product_id, SUM(i.qty) as total_sold
+                FROM so_items i
+                JOIN so_master s ON i.so_id = s.so_id
+                WHERE s.so_date >= '{thirty_days_ago}'
+                GROUP BY i.product_id
+            ),
+            stock_data AS (
+                SELECT product_id, SUM(qty_in) - SUM(qty_out) as current_stock
+                FROM inventory_ledger
+                GROUP BY product_id
+            )
+            SELECT 
+                p.name as "Product",
+                COALESCE(sd.total_sold, 0) as "Sold (Last 30 Days)",
+                ROUND(CAST(COALESCE(sd.total_sold, 0) / 30.0 AS NUMERIC), 2) as "Daily Avg Run Rate",
+                CEIL(COALESCE(sd.total_sold, 0) / 30.0 * 7) as "7-Day Forecast Qty",
+                COALESCE(st.current_stock, 0) as "Current Live Stock",
+                GREATEST(0, CEIL(COALESCE(sd.total_sold, 0) / 30.0 * 7) - COALESCE(st.current_stock, 0)) as "Suggested Order Qty"
+            FROM products p
+            LEFT JOIN sales_data sd ON p.id = sd.product_id
+            LEFT JOIN stock_data st ON p.id = st.product_id
+            WHERE COALESCE(sd.total_sold, 0) > 0 OR COALESCE(st.current_stock, 0) > 0
+            ORDER BY "Suggested Order Qty" DESC
+        """
+        
+        forecast_df = pd.read_sql_query(forecast_query, conn)
+        
+        if forecast_df.empty:
+            st.info("Not enough sales data in the last 30 days to generate a forecast.")
+        else:
+            # Color code the Suggested Order Qty column for immediate visual cues
+            def highlight_orders(val):
+                if val > 0: return 'background-color: #ffebee; color: #c62828; font-weight: bold'
+                return 'background-color: #e8f5e9; color: #2e7d32'
+                
+            styled_df = forecast_df.style.map(highlight_orders, subset=["Suggested Order Qty"])
+            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            
+            st.divider()
+            st.subheader("📊 Forecast Visualized")
+            # Filter only products that actually need ordering for the chart
+            chart_df = forecast_df[forecast_df["Suggested Order Qty"] > 0]
+            if not chart_df.empty:
+                fig = px.bar(chart_df, x="Product", y="Suggested Order Qty", 
+                             title="Items to Purchase This Week", 
+                             color="Suggested Order Qty", 
+                             color_continuous_scale="Reds")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.success("🎉 You have sufficient inventory for all items for the next 7 days based on current run rates!")
+                
         conn.close()
 
 # ==========================================
