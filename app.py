@@ -531,7 +531,8 @@ elif main_menu == "Purchase":
                 p.po_date as "Date", 
                 v.name as "Vendor", 
                 p.total_amount as "Product Total (Rs)", 
-                COALESCE((SELECT SUM(amount) FROM order_expenses WHERE order_ref = p.po_number), 0) as "PO Expenses (Rs)",
+                COALESCE((SELECT SUM(amount) FROM order_expenses WHERE order_ref = p.po_number AND expense_type = 'Freight'), 0) as "Logistics (Rs)",
+                COALESCE((SELECT SUM(amount) FROM order_expenses WHERE order_ref = p.po_number AND expense_type = 'Labour'), 0) as "Labour Charges (Rs)",
                 (p.total_amount + COALESCE((SELECT SUM(amount) FROM order_expenses WHERE order_ref = p.po_number), 0)) as "True Landing Cost (Rs)"
             FROM po_master p 
             JOIN vendors v ON p.vendor_id = v.id 
@@ -741,7 +742,8 @@ elif main_menu == "Sales":
                 s.so_date as "Date", 
                 c.name as "Client", 
                 s.total_amount as "Order Total (Rs)", 
-                COALESCE((SELECT SUM(amount) FROM order_expenses WHERE order_ref = s.so_number), 0) as "SO Expenses (Rs)",
+                COALESCE((SELECT SUM(amount) FROM order_expenses WHERE order_ref = s.so_number AND expense_type = 'Freight'), 0) as "Logistics (Rs)",
+                COALESCE((SELECT SUM(amount) FROM order_expenses WHERE order_ref = s.so_number AND expense_type = 'Labour'), 0) as "Labour Charges (Rs)",
                 s.status as "Status" 
             FROM so_master s 
             JOIN clients c ON s.client_id = c.id 
@@ -923,8 +925,8 @@ elif main_menu == "Finance":
 # ==========================================
 elif main_menu == "Logistics & Ops":
     if sub_menu == "Add PO/SO Expenses":
-        st.header("💸 Add Order-Level Expenses (True Landing Cost)")
-        st.write("Add freight, loading, or packing costs directly to a specific Purchase Order or Sales Order.")
+        st.header("💸 Add Order-Level Expenses")
+        st.write("Add logistics, labour, and packaging costs directly to a specific Purchase Order or Sales Order.")
         
         conn = get_db_connection()
         channel = st.radio("Select Order Type", ["Purchase Orders (PO)", "Sales Orders (SO)"])
@@ -942,21 +944,34 @@ elif main_menu == "Logistics & Ops":
                 col1, col2 = st.columns(2)
                 order_dict = {row['order_no']: f"{row['order_no']} | {row['party_name']} | {row['o_date']}" for _, row in orders_df.iterrows()}
                 order_ref = col1.selectbox("Select Order Number", options=list(order_dict.keys()), format_func=lambda x: order_dict[x])
+                notes = col2.text_input("Notes / Details")
                 
-                expense_type = col2.selectbox("Expense Type", ["Freight / Transport", "Loading / Unloading", "Packaging Material", "Tolls / Challans", "Other"])
-                amount = col1.number_input("Expense Amount (Rs) *", min_value=0.0, step=100.0)
-                notes = col2.text_input("Notes / Driver Details")
+                st.markdown("### Expense Breakdown")
+                c1, c2, c3 = st.columns(3)
+                freight = c1.number_input("Logistics/Freight Cost (Rs)", min_value=0.0, step=50.0)
+                labour = c2.number_input("Labour Charges (Rs)", min_value=0.0, step=50.0)
+                other = c3.number_input("Other Expenses (Rs)", min_value=0.0, step=50.0)
                 
-                if st.form_submit_button("💾 Save Expense to Order"):
-                    if amount > 0:
-                        c = conn.cursor()
-                        c.execute("INSERT INTO order_expenses (order_ref, expense_type, amount, notes, logged_date) VALUES (%s, %s, %s, %s, %s)", 
-                                  (str(order_ref), str(expense_type), float(amount), str(notes), str(datetime.date.today())))
+                if st.form_submit_button("💾 Save All Expenses to Order"):
+                    c = conn.cursor()
+                    added = False
+                    if freight > 0:
+                        c.execute("INSERT INTO order_expenses (order_ref, expense_type, amount, notes, logged_date) VALUES (%s, 'Freight', %s, %s, %s)", (str(order_ref), float(freight), str(notes), str(datetime.date.today())))
+                        added = True
+                    if labour > 0:
+                        c.execute("INSERT INTO order_expenses (order_ref, expense_type, amount, notes, logged_date) VALUES (%s, 'Labour', %s, %s, %s)", (str(order_ref), float(labour), str(notes), str(datetime.date.today())))
+                        added = True
+                    if other > 0:
+                        c.execute("INSERT INTO order_expenses (order_ref, expense_type, amount, notes, logged_date) VALUES (%s, 'Other', %s, %s, %s)", (str(order_ref), float(other), str(notes), str(datetime.date.today())))
+                        added = True
+                        
+                    if added:
                         conn.commit()
-                        st.success(f"✅ ₹{amount} added to {order_ref}'s landing cost!")
+                        st.success("✅ Expenses successfully attached to Order!")
                         time.sleep(1.5)
                         st.rerun()
-                    else: st.error("Amount must be greater than 0.")
+                    else: 
+                        st.error("Please enter an amount greater than 0.")
         conn.close()
         
     elif sub_menu == "Add Dispatch Details":
@@ -982,7 +997,7 @@ elif main_menu == "Logistics & Ops":
                 from_loc = col2.text_input("From Location *")
                 to_loc = col1.text_input("To (Destination) *")
                 dist = col2.number_input("Distance (KM)", min_value=0.0, step=1.0)
-                freight = col1.number_input("Total Freight Cost (Rs)", min_value=0.0, step=100.0)
+                freight = col1.number_input("Total Freight Cost (Rs)", min_value=0.0, step=100.0, help="For records only. Add exact monetary deductions in 'Add PO/SO Expenses'.")
                 if st.form_submit_button("💾 Save Logistics Details"):
                     if vehicle_no and from_loc and to_loc:
                         c = conn.cursor()
@@ -1030,11 +1045,14 @@ elif main_menu == "Dashboard":
     
     total_rev = pd.read_sql_query("SELECT COALESCE(SUM(total_amount), 0) FROM so_master", conn).iloc[0,0]
     total_cogs = pd.read_sql_query("SELECT COALESCE(SUM(total_amount), 0) FROM po_master", conn).iloc[0,0]
-    total_logistics_cost = pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM order_expenses", conn).iloc[0,0]
+    
+    total_freight = pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM order_expenses WHERE expense_type='Freight'", conn).iloc[0,0]
+    total_labour = pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM order_expenses WHERE expense_type='Labour'", conn).iloc[0,0]
+    total_other = pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM order_expenses WHERE expense_type NOT IN ('Freight', 'Labour')", conn).iloc[0,0]
     
     monthly_payroll = pd.read_sql_query("SELECT COALESCE(SUM(salary_per_day), 0) * 30 FROM employees WHERE status='Active'", conn).iloc[0,0]
     
-    total_opex = float(total_logistics_cost) + float(monthly_payroll)
+    total_opex = float(total_freight) + float(total_labour) + float(total_other) + float(monthly_payroll)
     net_profit = float(total_rev) - float(total_cogs) - total_opex
     net_margin = (net_profit / float(total_rev) * 100) if float(total_rev) > 0 else 0.0
     
@@ -1043,12 +1061,16 @@ elif main_menu == "Dashboard":
     }, {
         "Metric": "🛒 Cost of Goods Sold (Purchases)", "Value": f"₹ {float(total_cogs):,.2f}"
     }, {
-        "Metric": "🚚 Operational Burn (Freight + Monthly Payroll)", "Value": f"₹ {total_opex:,.2f}"
+        "Metric": "🚛 Logistics & Freight Costs", "Value": f"₹ {float(total_freight):,.2f}"
+    }, {
+        "Metric": "🧑‍🌾 Labour Charges (Loading/Unloading)", "Value": f"₹ {float(total_labour):,.2f}"
+    }, {
+        "Metric": "🏢 Monthly Fixed Payroll (Active Employees x 30)", "Value": f"₹ {float(monthly_payroll):,.2f}"
     }, {
         "Metric": "💎 TRUE NET PROFIT", "Value": f"₹ {net_profit:,.2f}"
     }])
     st.dataframe(investor_df, use_container_width=True, hide_index=True)
-    st.caption(f"**True Net Margin (After Logistics & Payroll): {net_margin:.1f}%**")
+    st.caption(f"**True Net Margin (After Logistics, Labour & Payroll): {net_margin:.1f}%**")
     st.divider()
 
     # --- 2. ALERTS PANEL ---
