@@ -569,8 +569,8 @@ elif main_menu == "Purchase":
         conn.close()
         
     elif sub_menu == "Purchase Forecasting":
-        st.header("🔮 Purchase Forecasting & Data Analysis")
-        st.write("This engine analyzes your sales velocity over the last 30 days and cross-references it with your current inventory to explicitly tell you what to purchase next week.")
+        st.header("🔮 Purchase Forecasting & Demand Analysis")
+        st.write("This engine analyzes historical order velocities and client ordering patterns to predict 7-day purchasing needs and daily demand breakdown.")
         
         conn = get_db_connection()
         thirty_days_ago = str(datetime.date.today() - datetime.timedelta(days=30))
@@ -590,11 +590,11 @@ elif main_menu == "Purchase":
             )
             SELECT 
                 p.name as "Product",
-                COALESCE(sd.total_sold, 0) as "Sold (Last 30 Days)",
+                ROUND(CAST(COALESCE(sd.total_sold, 0) AS NUMERIC), 2) as "Sold (Last 30 Days)",
                 ROUND(CAST(COALESCE(sd.total_sold, 0) / 30.0 AS NUMERIC), 2) as "Daily Avg Run Rate",
-                CEIL(COALESCE(sd.total_sold, 0) / 30.0 * 7) as "7-Day Forecast Qty",
-                COALESCE(st.current_stock, 0) as "Current Live Stock",
-                GREATEST(0, CEIL(COALESCE(sd.total_sold, 0) / 30.0 * 7) - COALESCE(st.current_stock, 0)) as "Suggested Order Qty"
+                ROUND(CAST(CEIL(COALESCE(sd.total_sold, 0) / 30.0 * 7) AS NUMERIC), 2) as "7-Day Forecast Qty",
+                ROUND(CAST(COALESCE(st.current_stock, 0) AS NUMERIC), 2) as "Current Live Stock",
+                ROUND(CAST(GREATEST(0, CEIL(COALESCE(sd.total_sold, 0) / 30.0 * 7) - COALESCE(st.current_stock, 0)) AS NUMERIC), 2) as "Suggested Order Qty"
             FROM products p
             LEFT JOIN sales_data sd ON p.id = sd.product_id
             LEFT JOIN stock_data st ON p.id = st.product_id
@@ -607,7 +607,6 @@ elif main_menu == "Purchase":
         if forecast_df.empty:
             st.info("Not enough sales data in the last 30 days to generate a forecast.")
         else:
-            # Color code the Suggested Order Qty column for immediate visual cues
             def highlight_orders(val):
                 if val > 0: return 'background-color: #ffebee; color: #c62828; font-weight: bold'
                 return 'background-color: #e8f5e9; color: #2e7d32'
@@ -616,12 +615,42 @@ elif main_menu == "Purchase":
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
             
             st.divider()
-            st.subheader("📊 Forecast Visualized")
-            # Filter only products that actually need ordering for the chart
+            st.subheader("📅 Client & SKU Wise Day-of-Week Forecast (Mon - Sun)")
+            st.caption("Average quantity ordered per day based on historical purchasing patterns across specific weekdays.")
+            
+            daywise_query = """
+                SELECT 
+                    c.name as "Client",
+                    p.name as "Product",
+                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM s.so_date) = 1 THEN i.qty END) AS NUMERIC), 2) as "Mon",
+                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM s.so_date) = 2 THEN i.qty END) AS NUMERIC), 2) as "Tue",
+                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM s.so_date) = 3 THEN i.qty END) AS NUMERIC), 2) as "Wed",
+                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM s.so_date) = 4 THEN i.qty END) AS NUMERIC), 2) as "Thu",
+                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM s.so_date) = 5 THEN i.qty END) AS NUMERIC), 2) as "Fri",
+                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM s.so_date) = 6 THEN i.qty END) AS NUMERIC), 2) as "Sat",
+                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM s.so_date) = 7 THEN i.qty END) AS NUMERIC), 2) as "Sun",
+                    ROUND(CAST(SUM(i.qty) AS NUMERIC), 2) as "Total Sold"
+                FROM so_items i
+                JOIN so_master s ON i.so_id = s.so_id
+                JOIN clients c ON s.client_id = c.id
+                JOIN products p ON i.product_id = p.id
+                GROUP BY c.name, p.name
+                ORDER BY c.name, "Total Sold" DESC
+            """
+            daywise_df = pd.read_sql_query(daywise_query, conn)
+            
+            if daywise_df.empty:
+                st.info("No client sales history found to build day-wise matrix.")
+            else:
+                daywise_df = daywise_df.fillna(0.0)
+                st.dataframe(daywise_df, use_container_width=True, hide_index=True)
+
+            st.divider()
+            st.subheader("📊 Suggested Purchase Quantities")
             chart_df = forecast_df[forecast_df["Suggested Order Qty"] > 0]
             if not chart_df.empty:
                 fig = px.bar(chart_df, x="Product", y="Suggested Order Qty", 
-                             title="Items to Purchase This Week", 
+                             title="Restock Priority For This Week", 
                              color="Suggested Order Qty", 
                              color_continuous_scale="Reds")
                 st.plotly_chart(fig, use_container_width=True)
@@ -692,8 +721,8 @@ elif main_menu == "Sales":
                     
                     st.session_state.so_cart.append({
                         "prod_id": int(selected_prod_id), 
-                        "Product": str(prod_dict[selected_prod_id]),
-                        "Batch Ref": str(batch_selected),
+                        "Product": str(prod_dict[selected_prod_id]), 
+                        "Batch Ref": str(batch_selected), 
                         "Order Qty": float(qty), 
                         "Rate": float(rate), 
                         "GST Rs": float(gst_amount), 
