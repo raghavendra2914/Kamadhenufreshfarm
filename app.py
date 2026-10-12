@@ -69,6 +69,20 @@ try:
 except Exception as e:
     pass
 
+def recalculate_order_totals(order_type, order_id):
+    conn = get_db_connection()
+    c = conn.cursor()
+    if order_type == 'PO':
+        c.execute("SELECT COALESCE(SUM(total), 0) FROM po_items WHERE po_id = %s", (order_id,))
+        new_total = float(c.fetchone()[0])
+        c.execute("UPDATE po_master SET total_amount = %s WHERE po_id = %s", (new_total, order_id))
+    else:
+        c.execute("SELECT COALESCE(SUM(total), 0) FROM so_items WHERE so_id = %s", (order_id,))
+        new_total = float(c.fetchone()[0])
+        c.execute("UPDATE so_master SET total_amount = %s WHERE so_id = %s", (new_total, order_id))
+    conn.commit()
+    conn.close()
+
 st.set_page_config(page_title="Company ERP", layout="wide")
 
 # ==========================================
@@ -440,46 +454,67 @@ elif main_menu == "Purchase":
                     st.rerun()
 
     elif sub_menu == "PO Records & GRN":
-        st.header("Update Purchase Orders (GRN)")
+        st.header("Update & Delete Purchase Order Items (GRN)")
         conn = get_db_connection()
         pos = pd.read_sql_query("SELECT po_id, po_number FROM po_master ORDER BY po_id DESC", conn)
         if not pos.empty:
             selected_po = st.selectbox("Select Purchase Order to Update", pos['po_number'].tolist())
             po_id = int(pos.loc[pos['po_number'] == selected_po, 'po_id'].values[0])
-            st.write("✏️ **Double-click the numbers in 'Received_Qty', 'GRN_Qty', and 'Rate' below to edit them!**")
+            st.write("---")
             
-            items_query = f'SELECT item_id, p.name as "Product", qty as "Indent_Qty", COALESCE(received_qty, qty) as "Received_Qty", COALESCE(grn_qty, qty) as "GRN_Qty", rate as "Rate" FROM po_items i JOIN products p ON i.product_id = p.id WHERE po_id = {po_id}'
+            items_query = f'SELECT item_id, p.id as prod_id, p.name as "Product", qty as "Indent_Qty", COALESCE(received_qty, qty) as "Received_Qty", COALESCE(grn_qty, qty) as "GRN_Qty", rate as "Rate" FROM po_items i JOIN products p ON i.product_id = p.id WHERE po_id = {po_id}'
             items_df = pd.read_sql_query(items_query, conn)
             
-            edited_po_df = st.data_editor(items_df, disabled=["item_id", "Product", "Indent_Qty"], hide_index=True, use_container_width=True)
-            if st.button("💾 Save Updates to PO"):
-                c = conn.cursor()
-                new_grand_total = 0.0
-                for index, row in edited_po_df.iterrows():
+            if items_df.empty:
+                st.warning("No items remaining in this Purchase Order.")
+            else:
+                header1, header2, header3, header4, header5 = st.columns([3, 1, 1, 1, 2])
+                header1.write("**Product (Ordered Qty)**")
+                header2.write("**Received Qty**")
+                header3.write("**GRN Qty**")
+                header4.write("**Rate (Rs)**")
+                header5.write("**Actions**")
+                st.markdown("---")
+                
+                for idx, row in items_df.iterrows():
+                    c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 1, 2])
                     item_id = int(row['item_id'])
-                    grn_qty = float(row['GRN_Qty'])
-                    new_rate = float(row['Rate'])
+                    prod_id = int(row['prod_id'])
                     
-                    c.execute("SELECT product_id FROM po_items WHERE item_id = %s", (item_id,))
-                    prod_id = int(c.fetchone()[0])
-                    c.execute("SELECT tax_rate FROM products WHERE id = %s", (prod_id,))
-                    tax_rate = float(c.fetchone()[0])
+                    c1.write(f"📦 {row['Product']} (Ordered: {row['Indent_Qty']})")
+                    new_rec = c2.number_input("Rec", value=float(row['Received_Qty']), key=f"rec_{item_id}", label_visibility="collapsed")
+                    new_grn = c3.number_input("GRN", value=float(row['GRN_Qty']), key=f"grn_{item_id}", label_visibility="collapsed")
+                    new_rate = c4.number_input("Rate", value=float(row['Rate']), key=f"rt_{item_id}", label_visibility="collapsed")
                     
-                    base_total = grn_qty * new_rate
-                    gst_amount = base_total * (tax_rate / 100)
-                    item_total = base_total + gst_amount
-                    new_grand_total += item_total
-                    
-                    c.execute("UPDATE po_items SET received_qty = %s, grn_qty = %s, rate = %s, gst_amount = %s, total = %s WHERE item_id = %s", 
-                              (float(row['Received_Qty']), grn_qty, new_rate, float(gst_amount), float(item_total), item_id))
-                    c.execute("UPDATE inventory_ledger SET qty_in = %s WHERE ref_type = 'Purchase' AND ref_id = %s AND product_id = %s", 
-                              (grn_qty, str(selected_po), prod_id))
-                              
-                c.execute("UPDATE po_master SET total_amount = %s WHERE po_id = %s", (float(new_grand_total), po_id))
-                conn.commit()
-                st.success(f"Tracking quantities, dynamic pricing, and financials updated for {selected_po}!")
-                time.sleep(1)
-                st.rerun()
+                    btn1, btn2 = c5.columns(2)
+                    if btn1.button("✏️ Edit", key=f"ed_{item_id}"):
+                        c = conn.cursor()
+                        c.execute("SELECT tax_rate FROM products WHERE id = %s", (prod_id,))
+                        tax_rate = float(c.fetchone()[0])
+                        base_total = new_grn * new_rate
+                        gst_amount = base_total * (tax_rate / 100)
+                        item_total = base_total + gst_amount
+                        
+                        c.execute("UPDATE po_items SET received_qty = %s, grn_qty = %s, rate = %s, gst_amount = %s, total = %s WHERE item_id = %s", 
+                                  (new_rec, new_grn, new_rate, gst_amount, item_total, item_id))
+                        c.execute("UPDATE inventory_ledger SET qty_in = %s WHERE ref_type = 'Purchase' AND ref_id = %s AND product_id = %s", 
+                                  (new_grn, str(selected_po), prod_id))
+                        conn.commit()
+                        recalculate_order_totals('PO', po_id)
+                        st.success("Item updated!")
+                        time.sleep(1)
+                        st.rerun()
+                        
+                    if btn2.button("🗑️ Delete", key=f"del_{item_id}"):
+                        c = conn.cursor()
+                        c.execute("DELETE FROM po_items WHERE item_id = %s", (item_id,))
+                        c.execute("DELETE FROM inventory_ledger WHERE ref_type = 'Purchase' AND ref_id = %s AND product_id = %s", (str(selected_po), prod_id))
+                        conn.commit()
+                        recalculate_order_totals('PO', po_id)
+                        st.warning("Item completely deleted from PO and Inventory!")
+                        time.sleep(1)
+                        st.rerun()
+        conn.close()
 
     elif sub_menu == "View Purchase Orders":
         st.header("📋 View & Export Purchase Orders (True Landing Cost)")
@@ -629,50 +664,69 @@ elif main_menu == "Sales":
         conn.close()
 
     elif sub_menu == "Sales Records & Tracking":
-        st.header("Update Sales Orders (Dispatch & Returns)")
+        st.header("Update & Delete Sales Order Items (Dispatch)")
         conn = get_db_connection()
         sos = pd.read_sql_query("SELECT so_id, so_number FROM so_master ORDER BY so_id DESC", conn)
         if not sos.empty:
             selected_so = st.selectbox("Select Sales Order to Update", sos['so_number'].tolist())
             so_id = int(sos.loc[sos['so_number'] == selected_so, 'so_id'].values[0])
-            st.write("✏️ **Double-click the numbers below to edit Dispatch Qty, Client Received Qty, and Rejected Qty:**")
+            st.write("---")
             
-            items_query = f'SELECT item_id, p.name as "Product", qty as "Order_Qty", COALESCE(dispatch_qty, qty) as "Dispatch_Qty", COALESCE(received_qty, qty) as "Client_Received_Qty", COALESCE(rejected_qty, 0) as "Rejected_Qty" FROM so_items i JOIN products p ON i.product_id = p.id WHERE so_id = {so_id}'
+            items_query = f'SELECT item_id, p.id as prod_id, p.name as "Product", qty as "Order_Qty", COALESCE(dispatch_qty, qty) as "Dispatch_Qty", COALESCE(received_qty, qty) as "Client_Received_Qty", COALESCE(rejected_qty, 0) as "Rejected_Qty", rate as "Rate" FROM so_items i JOIN products p ON i.product_id = p.id WHERE so_id = {so_id}'
             items_df = pd.read_sql_query(items_query, conn)
             
-            edited_so_df = st.data_editor(items_df, disabled=["item_id", "Product", "Order_Qty"], hide_index=True, use_container_width=True)
-            if st.button("💾 Save Updates to SO"):
-                c = conn.cursor()
-                new_grand_total = 0.0
-                for index, row in edited_so_df.iterrows():
+            if items_df.empty:
+                st.warning("No items remaining in this Sales Order.")
+            else:
+                header1, header2, header3, header4, header5 = st.columns([3, 1, 1, 1, 2])
+                header1.write("**Product (Ordered Qty)**")
+                header2.write("**Dispatch Qty**")
+                header3.write("**Client Rec Qty**")
+                header4.write("**Rejected Qty**")
+                header5.write("**Actions**")
+                st.markdown("---")
+                
+                for idx, row in items_df.iterrows():
+                    c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 1, 2])
                     item_id = int(row['item_id'])
-                    rec_qty = float(row['Client_Received_Qty'])
-                    rej_qty = float(row['Rejected_Qty'])
+                    prod_id = int(row['prod_id'])
                     
-                    c.execute("SELECT product_id, rate FROM so_items WHERE item_id = %s", (item_id,))
-                    prod_data = c.fetchone()
-                    prod_id = int(prod_data[0])
-                    rate = float(prod_data[1])
+                    c1.write(f"📦 {row['Product']} (Ordered: {row['Order_Qty']})")
+                    new_disp = c2.number_input("Disp", value=float(row['Dispatch_Qty']), key=f"disp_{item_id}", label_visibility="collapsed")
+                    new_rec = c3.number_input("Rec", value=float(row['Client_Received_Qty']), key=f"srec_{item_id}", label_visibility="collapsed")
+                    new_rej = c4.number_input("Rej", value=float(row['Rejected_Qty']), key=f"srej_{item_id}", label_visibility="collapsed")
                     
-                    c.execute("SELECT tax_rate FROM products WHERE id = %s", (prod_id,))
-                    tax_rate = float(c.fetchone()[0])
-                    
-                    base_total = rec_qty * rate
-                    gst_amount = base_total * (tax_rate / 100)
-                    item_total = base_total + gst_amount
-                    new_grand_total += item_total
-                    
-                    c.execute("UPDATE so_items SET dispatch_qty = %s, received_qty = %s, rejected_qty = %s, gst_amount = %s, total = %s WHERE item_id = %s", 
-                              (float(row['Dispatch_Qty']), rec_qty, rej_qty, float(gst_amount), float(item_total), item_id))
-                              
-                    c.execute("UPDATE inventory_ledger SET qty_out = %s WHERE ref_type = 'Sale' AND ref_id = %s AND product_id = %s", 
-                              (rec_qty, str(selected_so), prod_id))
-                              
-                c.execute("UPDATE so_master SET total_amount = %s WHERE so_id = %s", (float(new_grand_total), so_id))
-                conn.commit()
-                st.success(f"Tracking quantities, inventory, and financials updated for {selected_so}!")
-                time.sleep(1)
-                st.rerun()
+                    btn1, btn2 = c5.columns(2)
+                    if btn1.button("✏️ Edit", key=f"sed_{item_id}"):
+                        c = conn.cursor()
+                        rate = float(row['Rate'])
+                        c.execute("SELECT tax_rate FROM products WHERE id = %s", (prod_id,))
+                        tax_rate = float(c.fetchone()[0])
+                        
+                        base_total = new_rec * rate
+                        gst_amount = base_total * (tax_rate / 100)
+                        item_total = base_total + gst_amount
+                        
+                        c.execute("UPDATE so_items SET dispatch_qty = %s, received_qty = %s, rejected_qty = %s, gst_amount = %s, total = %s WHERE item_id = %s", 
+                                  (new_disp, new_rec, new_rej, gst_amount, item_total, item_id))
+                        c.execute("UPDATE inventory_ledger SET qty_out = %s WHERE ref_type = 'Sale' AND ref_id = %s AND product_id = %s", 
+                                  (new_rec, str(selected_so), prod_id))
+                        conn.commit()
+                        recalculate_order_totals('SO', so_id)
+                        st.success("Item updated!")
+                        time.sleep(1)
+                        st.rerun()
+                        
+                    if btn2.button("🗑️ Delete", key=f"sdel_{item_id}"):
+                        c = conn.cursor()
+                        c.execute("DELETE FROM so_items WHERE item_id = %s", (item_id,))
+                        c.execute("DELETE FROM inventory_ledger WHERE ref_type = 'Sale' AND ref_id = %s AND product_id = %s", (str(selected_so), prod_id))
+                        conn.commit()
+                        recalculate_order_totals('SO', so_id)
+                        st.warning("Item completely deleted from SO and Inventory!")
+                        time.sleep(1)
+                        st.rerun()
+        conn.close()
 
     elif sub_menu == "View Sales Orders":
         st.header("📋 View & Export Sales Orders")
@@ -761,11 +815,8 @@ elif main_menu == "Inventory":
                     prod_id, batch_no = selected_val.split("_")
                     c = conn.cursor()
                     
-                    # Add to Wastage Ledger
                     c.execute("INSERT INTO wastage_ledger (product_id, batch_no, qty, reason, log_date) VALUES (%s, %s, %s, %s, %s)", 
                               (int(prod_id), str(batch_no), float(w_qty), str(w_reason), str(datetime.date.today())))
-                    
-                    # Deduct from Inventory
                     c.execute("INSERT INTO inventory_ledger (product_id, batch_no, qty_in, qty_out, ref_type, ref_id, txn_date) VALUES (%s, %s, 0, %s, 'Wastage', 'WRITE-OFF', %s)", 
                               (int(prod_id), str(batch_no), float(w_qty), str(datetime.date.today())))
                               
@@ -896,7 +947,6 @@ elif main_menu == "Dashboard":
     total_cogs = pd.read_sql_query("SELECT COALESCE(SUM(total_amount), 0) FROM po_master", conn).iloc[0,0]
     total_logistics_cost = pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM order_expenses", conn).iloc[0,0]
     
-    # Simple Payroll calculation (Sum of daily wages * 30 days) to get monthly burn
     monthly_payroll = pd.read_sql_query("SELECT COALESCE(SUM(salary_per_day), 0) * 30 FROM employees WHERE status='Active'", conn).iloc[0,0]
     
     total_opex = float(total_logistics_cost) + float(monthly_payroll)
