@@ -533,6 +533,7 @@ elif main_menu == "Purchase":
                 p.total_amount as "Product Total (Rs)", 
                 COALESCE((SELECT SUM(amount) FROM order_expenses WHERE order_ref = p.po_number AND expense_type = 'Freight'), 0) as "Logistics (Rs)",
                 COALESCE((SELECT SUM(amount) FROM order_expenses WHERE order_ref = p.po_number AND expense_type = 'Labour'), 0) as "Labour Charges (Rs)",
+                COALESCE((SELECT SUM(amount) FROM order_expenses WHERE order_ref = p.po_number AND expense_type = 'Other'), 0) as "Other Expenses (Rs)",
                 (p.total_amount + COALESCE((SELECT SUM(amount) FROM order_expenses WHERE order_ref = p.po_number), 0)) as "True Landing Cost (Rs)"
             FROM po_master p 
             JOIN vendors v ON p.vendor_id = v.id 
@@ -744,6 +745,7 @@ elif main_menu == "Sales":
                 s.total_amount as "Order Total (Rs)", 
                 COALESCE((SELECT SUM(amount) FROM order_expenses WHERE order_ref = s.so_number AND expense_type = 'Freight'), 0) as "Logistics (Rs)",
                 COALESCE((SELECT SUM(amount) FROM order_expenses WHERE order_ref = s.so_number AND expense_type = 'Labour'), 0) as "Labour Charges (Rs)",
+                COALESCE((SELECT SUM(amount) FROM order_expenses WHERE order_ref = s.so_number AND expense_type = 'Other'), 0) as "Other Expenses (Rs)",
                 s.status as "Status" 
             FROM so_master s 
             JOIN clients c ON s.client_id = c.id 
