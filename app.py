@@ -622,13 +622,13 @@ elif main_menu == "Purchase":
                 SELECT 
                     c.name as "Client",
                     p.name as "Product",
-                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM s.so_date) = 1 THEN i.qty END) AS NUMERIC), 2) as "Mon",
-                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM s.so_date) = 2 THEN i.qty END) AS NUMERIC), 2) as "Tue",
-                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM s.so_date) = 3 THEN i.qty END) AS NUMERIC), 2) as "Wed",
-                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM s.so_date) = 4 THEN i.qty END) AS NUMERIC), 2) as "Thu",
-                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM s.so_date) = 5 THEN i.qty END) AS NUMERIC), 2) as "Fri",
-                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM s.so_date) = 6 THEN i.qty END) AS NUMERIC), 2) as "Sat",
-                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM s.so_date) = 7 THEN i.qty END) AS NUMERIC), 2) as "Sun",
+                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM CAST(s.so_date AS DATE)) = 1 THEN i.qty END) AS NUMERIC), 2) as "Mon",
+                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM CAST(s.so_date AS DATE)) = 2 THEN i.qty END) AS NUMERIC), 2) as "Tue",
+                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM CAST(s.so_date AS DATE)) = 3 THEN i.qty END) AS NUMERIC), 2) as "Wed",
+                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM CAST(s.so_date AS DATE)) = 4 THEN i.qty END) AS NUMERIC), 2) as "Thu",
+                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM CAST(s.so_date AS DATE)) = 5 THEN i.qty END) AS NUMERIC), 2) as "Fri",
+                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM CAST(s.so_date AS DATE)) = 6 THEN i.qty END) AS NUMERIC), 2) as "Sat",
+                    ROUND(CAST(AVG(CASE WHEN EXTRACT(ISODOW FROM CAST(s.so_date AS DATE)) = 7 THEN i.qty END) AS NUMERIC), 2) as "Sun",
                     ROUND(CAST(SUM(i.qty) AS NUMERIC), 2) as "Total Sold"
                 FROM so_items i
                 JOIN so_master s ON i.so_id = s.so_id
@@ -721,8 +721,8 @@ elif main_menu == "Sales":
                     
                     st.session_state.so_cart.append({
                         "prod_id": int(selected_prod_id), 
-                        "Product": str(prod_dict[selected_prod_id]), 
-                        "Batch Ref": str(batch_selected), 
+                        "Product": str(prod_dict[selected_prod_id]),
+                        "Batch Ref": str(batch_selected),
                         "Order Qty": float(qty), 
                         "Rate": float(rate), 
                         "GST Rs": float(gst_amount), 
