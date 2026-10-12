@@ -241,27 +241,41 @@ if main_menu == "Master Data":
             v_pan = c2.text_input("PAN")
             v_address = st.text_area("Full Address")
             v_terms = st.text_input("Payment Terms")
+            
+            st.markdown("### 🏦 Secure Bank Details")
+            c3, c4 = st.columns(2)
+            bank_acc1 = c3.text_input("Account Number *", type="password")
+            bank_acc2 = c4.text_input("Confirm Account Number *")
+            v_ifsc = c3.text_input("IFSC Code *")
+            v_file = st.file_uploader("Upload Cancelled Cheque / Passbook Image", type=["pdf", "jpg", "jpeg", "png"])
+            
             if st.form_submit_button("Save Vendor"):
-                if v_name:
+                if not v_name or not bank_acc1 or not bank_acc2 or not v_ifsc:
+                    st.error("Please fill all mandatory (*) fields including Bank details.")
+                elif bank_acc1 != bank_acc2:
+                    st.error("Account Numbers do not match! Please check again.")
+                else:
+                    file_data = psycopg2.Binary(v_file.read()) if v_file else None
                     conn = get_db_connection()
                     c = conn.cursor()
-                    c.execute("INSERT INTO vendors (name, contact, address, gstin, pan, payment_terms) VALUES (%s, %s, %s, %s, %s, %s)", 
-                              (str(v_name), str(v_contact), str(v_address), str(v_gstin), str(v_pan), str(v_terms)))
+                    c.execute("INSERT INTO vendors (name, contact, address, gstin, pan, payment_terms, bank_account, ifsc_code, passbook_file) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", 
+                              (str(v_name), str(v_contact), str(v_address), str(v_gstin), str(v_pan), str(v_terms), str(bank_acc1), str(v_ifsc), file_data))
                     conn.commit()
                     conn.close()
-                    st.success("Vendor saved!")
-                    time.sleep(1)
+                    st.success("Vendor and Bank details securely saved!")
+                    time.sleep(1.5)
                     st.rerun()
+                    
         st.subheader("Registered Vendors")
         conn = get_db_connection()
-        show_data_with_delete("vendors", pd.read_sql_query("SELECT id, name, contact, gstin FROM vendors", conn), "V")
+        show_data_with_delete("vendors", pd.read_sql_query("SELECT id, name, contact, gstin, bank_account as \"A/C No\" FROM vendors", conn), "V")
         conn.close()
         
     elif sub_menu == "Facility Onboarding":
         st.header("🏢 Facility Master")
         with st.form("facility_form"):
             c1, c2 = st.columns(2)
-            f_name = c1.text_input("Facility Name *")
+            f_name = c1.text_input("Facility Name * (e.g. HSR Hub, Farm 1)")
             f_type = c2.selectbox("Facility Type", ["Warehouse", "Processing Unit", "Cold Storage", "Retail Outlet", "Farm", "Other"])
             f_loc = st.text_area("Full Location Address *")
             if st.form_submit_button("Save Facility"):
@@ -780,17 +794,19 @@ elif main_menu == "Logistics & Ops":
         channel = st.radio("Select Order Type", ["Purchase Orders (PO)", "Sales Orders (SO)"])
         
         if "Purchase" in channel:
-            orders_df = pd.read_sql_query("SELECT po_number as order_no FROM po_master", conn)
+            orders_query = "SELECT p.po_number as order_no, p.po_date as o_date, v.name as party_name FROM po_master p JOIN vendors v ON p.vendor_id = v.id ORDER BY p.po_id DESC"
         else:
-            orders_df = pd.read_sql_query("SELECT so_number as order_no FROM so_master", conn)
+            orders_query = "SELECT s.so_number as order_no, s.so_date as o_date, c.name as party_name FROM so_master s JOIN clients c ON s.client_id = c.id ORDER BY s.so_id DESC"
             
-        all_orders = orders_df['order_no'].tolist()
+        orders_df = pd.read_sql_query(orders_query, conn)
         
-        if not all_orders: st.warning("No orders found. Create an order first.")
+        if orders_df.empty: st.warning("No orders found. Create an order first.")
         else:
             with st.form("expense_form"):
                 col1, col2 = st.columns(2)
-                order_ref = col1.selectbox("Select Order Number", all_orders)
+                order_dict = {row['order_no']: f"{row['order_no']} | {row['party_name']} | {row['o_date']}" for _, row in orders_df.iterrows()}
+                order_ref = col1.selectbox("Select Order Number", options=list(order_dict.keys()), format_func=lambda x: order_dict[x])
+                
                 expense_type = col2.selectbox("Expense Type", ["Freight / Transport", "Loading / Unloading", "Packaging Material", "Tolls / Challans", "Other"])
                 amount = col1.number_input("Expense Amount (Rs) *", min_value=0.0, step=100.0)
                 notes = col2.text_input("Notes / Driver Details")
@@ -805,6 +821,65 @@ elif main_menu == "Logistics & Ops":
                         time.sleep(1.5)
                         st.rerun()
                     else: st.error("Amount must be greater than 0.")
+        conn.close()
+        
+    elif sub_menu == "Add Dispatch Details":
+        st.header("🚚 Add Dispatch Details")
+        channel = st.radio("Select Channel", ["Purchase (Inbound Pick up)", "Sales (Outbound Dispatch)"])
+        conn = get_db_connection()
+        if "Purchase" in channel: 
+            orders_query = "SELECT p.po_number as order_no, p.po_date as o_date, v.name as party_name FROM po_master p JOIN vendors v ON p.vendor_id = v.id ORDER BY p.po_id DESC"
+        else: 
+            orders_query = "SELECT s.so_number as order_no, s.so_date as o_date, c.name as party_name FROM so_master s JOIN clients c ON s.client_id = c.id ORDER BY s.so_id DESC"
+        
+        orders_df = pd.read_sql_query(orders_query, conn)
+        
+        if orders_df.empty: st.warning(f"No orders found for {channel}. Create an order first.")
+        else:
+            with st.form("logistics_form"):
+                col1, col2 = st.columns(2)
+                order_dict = {row['order_no']: f"{row['order_no']} | {row['party_name']} | {row['o_date']}" for _, row in orders_df.iterrows()}
+                order_ref = col1.selectbox("Select Order Reference", options=list(order_dict.keys()), format_func=lambda x: order_dict[x])
+                
+                driver_name = col2.text_input("Driver Name")
+                vehicle_no = col1.text_input("Vehicle Number (e.g., KA-01-AB-1234) *")
+                from_loc = col2.text_input("From Location *")
+                to_loc = col1.text_input("To (Destination) *")
+                dist = col2.number_input("Distance (KM)", min_value=0.0, step=1.0)
+                freight = col1.number_input("Total Freight Cost (Rs)", min_value=0.0, step=100.0, help="For records only. Add exact monetary deductions in 'Add PO/SO Expenses'.")
+                if st.form_submit_button("💾 Save Logistics Details"):
+                    if vehicle_no and from_loc and to_loc:
+                        c = conn.cursor()
+                        c.execute("INSERT INTO logistics (order_ref, from_loc, to_loc, vehicle_no, driver_name, distance_km, freight_cost) VALUES (%s, %s, %s, %s, %s, %s, %s)", (str(order_ref), str(from_loc), str(to_loc), str(vehicle_no), str(driver_name), float(dist), float(freight)))
+                        conn.commit()
+                        st.success(f"✅ Logistics details saved for {order_ref}!")
+                        time.sleep(1.5)
+                        st.rerun()
+                    else: st.error("Vehicle No, From, and To locations are mandatory.")
+        conn.close()
+        
+    elif sub_menu == "Route & Freight Report":
+        st.header("🗺️ Route & Freight Cost Analysis")
+        conn = get_db_connection()
+        query = 'SELECT l.order_ref as "Order Ref", l.from_loc || \' ➡️ \' || l.to_loc as "Route", l.vehicle_no as "Vehicle", l.driver_name as "Driver", l.distance_km as "Distance (KM)", l.freight_cost as "Freight (Rs)" FROM logistics l ORDER BY l.id DESC'
+        log_df = pd.read_sql_query(query, conn)
+        if not log_df.empty:
+            po_qtys = pd.read_sql_query("SELECT p.po_number as order_no, SUM(i.qty) as total_qty FROM po_master p JOIN po_items i ON p.po_id = i.po_id GROUP BY p.po_id", conn)
+            so_qtys = pd.read_sql_query("SELECT s.so_number as order_no, SUM(i.qty) as total_qty FROM so_master s JOIN so_items i ON s.so_id = i.so_id GROUP BY s.so_id", conn)
+            all_qtys = pd.concat([po_qtys, so_qtys]).set_index('order_no')
+            def get_cost_per_kg(row):
+                order = row['Order Ref']
+                freight = row['Freight (Rs)']
+                if order in all_qtys.index and freight > 0:
+                    qty = all_qtys.loc[order, 'total_qty']
+                    if qty > 0: return round(freight / qty, 2)
+                return 0.0
+            log_df['Cost per Kg/Crate (Rs)'] = log_df.apply(get_cost_per_kg, axis=1)
+            st.dataframe(log_df, use_container_width=True, hide_index=True)
+            st.subheader("Total Freight Spent by Route")
+            route_summary = log_df.groupby('Route')['Freight (Rs)'].sum().reset_index()
+            st.bar_chart(route_summary.set_index('Route'))
+        else: st.info("No logistics records found.")
         conn.close()
 
 # ==========================================
