@@ -926,9 +926,21 @@ elif main_menu == "Inventory":
         conn.close()
 
 # ==========================================
-# 5. FINANCE MODULE
+# 5. FINANCE MODULE (AGING REPORT)
 # ==========================================
 elif main_menu == "Finance":
+    
+    def style_aging_row(row):
+        if row['Balance (Rs)'] <= 0.01:
+            style = 'background-color: #e8f5e9; color: #2e7d32' # Green (Paid)
+        elif row['Days Outstanding'] > 30:
+            style = 'background-color: #ffebee; color: #c62828' # Red (30+ Days)
+        elif row['Days Outstanding'] > 15:
+            style = 'background-color: #fff3e0; color: #e65100' # Orange (15+ Days)
+        else:
+            style = '' # Normal
+        return [style] * len(row)
+
     if sub_menu == "Add Payment":
         st.header("💸 Record Order-Wise Payment")
         party_type = st.radio("Who are you transacting with?", ["Client (Receiving Money)", "Vendor (Paying Money)"])
@@ -976,34 +988,50 @@ elif main_menu == "Finance":
         conn.close()
                     
     elif sub_menu == "Receivables (Client Bills)":
-        st.header("📈 Client Receivables (Bill-wise)")
+        st.header("📈 Client Receivables (Aging Report)")
+        st.caption("🟢 **Paid** | ⚪ **Under 15 Days** | 🟠 **15-30 Days Overdue** | 🔴 **30+ Days Overdue**")
         conn = get_db_connection()
         query = 'SELECT s.so_number as "Sales Order", c.name as "Client", s.so_date as "Date", s.total_amount as "Bill Amount (Rs)", COALESCE((SELECT SUM(amount) FROM payments WHERE order_no = s.so_number), 0) as "Paid Amount (Rs)" FROM so_master s JOIN clients c ON s.client_id = c.id ORDER BY s.so_id DESC'
         df = pd.read_sql_query(query, conn)
         if not df.empty:
             df['Balance (Rs)'] = (df['Bill Amount (Rs)'] - df['Paid Amount (Rs)']).astype(float).round(2)
-            df['Status'] = df['Balance (Rs)'].apply(lambda x: '✅ Payment Made' if x <= 0.01 else '⏳ Pending')
+            df['Status'] = df['Balance (Rs)'].apply(lambda x: '✅ Paid' if x <= 0.01 else '⏳ Pending')
+            
+            # Aging Calculation
+            today = pd.Timestamp(datetime.date.today())
+            df['Days Outstanding'] = (today - pd.to_datetime(df['Date'])).dt.days
+            
             utr_df = pd.read_sql_query("SELECT order_no, string_agg(utr_number, ', ') as UTRs FROM payments GROUP BY order_no", conn)
             df = df.merge(utr_df, left_on='Sales Order', right_on='order_no', how='left').drop(columns=['order_no'])
             df['UTRs'] = df['utrs'].fillna('-')
             df.drop(columns=['utrs'], inplace=True, errors='ignore')
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            
+            styled_df = df.style.apply(style_aging_row, axis=1)
+            st.dataframe(styled_df, use_container_width=True, hide_index=True)
         else: st.info("No Sales Orders found.")
         conn.close()
             
     elif sub_menu == "Payables (Vendor Bills)":
-        st.header("📉 Vendor Payables (Bill-wise)")
+        st.header("📉 Vendor Payables (Aging Report)")
+        st.caption("🟢 **Paid** | ⚪ **Under 15 Days** | 🟠 **15-30 Days Overdue** | 🔴 **30+ Days Overdue**")
         conn = get_db_connection()
         query = 'SELECT p.po_number as "Purchase Order", v.name as "Vendor", p.po_date as "Date", p.total_amount as "Bill Amount (Rs)", COALESCE((SELECT SUM(amount) FROM payments WHERE order_no = p.po_number), 0) as "Paid Amount (Rs)" FROM po_master p JOIN vendors v ON p.vendor_id = v.id ORDER BY p.po_id DESC'
         df = pd.read_sql_query(query, conn)
         if not df.empty:
             df['Balance (Rs)'] = (df['Bill Amount (Rs)'] - df['Paid Amount (Rs)']).astype(float).round(2)
-            df['Status'] = df['Balance (Rs)'].apply(lambda x: '✅ Payment Made' if x <= 0.01 else '⏳ Pending')
+            df['Status'] = df['Balance (Rs)'].apply(lambda x: '✅ Paid' if x <= 0.01 else '⏳ Pending')
+            
+            # Aging Calculation
+            today = pd.Timestamp(datetime.date.today())
+            df['Days Outstanding'] = (today - pd.to_datetime(df['Date'])).dt.days
+            
             utr_df = pd.read_sql_query("SELECT order_no, string_agg(utr_number, ', ') as UTRs FROM payments GROUP BY order_no", conn)
             df = df.merge(utr_df, left_on='Purchase Order', right_on='order_no', how='left').drop(columns=['order_no'])
             df['UTRs'] = df['utrs'].fillna('-')
             df.drop(columns=['utrs'], inplace=True, errors='ignore')
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            
+            styled_df = df.style.apply(style_aging_row, axis=1)
+            st.dataframe(styled_df, use_container_width=True, hide_index=True)
         else: st.info("No Purchase Orders found.")
         conn.close()
 
