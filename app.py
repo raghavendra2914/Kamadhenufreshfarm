@@ -3,6 +3,7 @@ import pandas as pd
 import psycopg2
 import time
 import datetime
+import io
 import platform
 import warnings
 import streamlit.components.v1 as components
@@ -187,14 +188,18 @@ with st.sidebar:
                 sac.MenuItem('Add Payment', icon='cash-coin'),
                 sac.MenuItem('Receivables (Client Bills)', icon='graph-up'),
                 sac.MenuItem('Payables (Vendor Bills)', icon='graph-down'),
-                sac.MenuItem('Payment Records', icon='journal-text')
+                sac.MenuItem('Payment Records', icon='journal-text'),
+                sac.MenuItem('Investor Planning & ROI', icon='pie-chart')
             ]),
             sac.MenuItem('Logistics & Ops', icon='truck', children=[
                 sac.MenuItem('Add PO/SO Expenses', icon='currency-rupee'),
                 sac.MenuItem('Add Dispatch Details', icon='send'),
                 sac.MenuItem('Route & Freight Report', icon='map')
             ]),
-            sac.MenuItem('System Info', icon='info-circle')
+            sac.MenuItem('System Info', icon='info-circle', children=[
+                sac.MenuItem('Cloud Status & Users', icon='cloud-check'),
+                sac.MenuItem('Master G-Sheets Export', icon='file-earmark-excel')
+            ])
         ]
     else:
         menu_items = [
@@ -213,17 +218,17 @@ parent_map = {
     'Create PO': 'Purchase', 'PO Records & GRN': 'Purchase', 'View Purchase Orders': 'Purchase', 'Purchase Forecasting': 'Purchase',
     'Create Sales Order': 'Sales', 'Sales Records & Tracking': 'Sales', 'View Sales Orders': 'Sales',
     'Live Stock': 'Inventory', 'Ledger History': 'Inventory', 'Log Wastage & Spoilage': 'Inventory',
-    'Add Payment': 'Finance', 'Receivables (Client Bills)': 'Finance', 'Payables (Vendor Bills)': 'Finance', 'Payment Records': 'Finance',
+    'Add Payment': 'Finance', 'Receivables (Client Bills)': 'Finance', 'Payables (Vendor Bills)': 'Finance', 'Payment Records': 'Finance', 'Investor Planning & ROI': 'Finance',
     'Add PO/SO Expenses': 'Logistics & Ops', 'Add Dispatch Details': 'Logistics & Ops', 'Route & Freight Report': 'Logistics & Ops',
-    'Dashboard': 'Dashboard', 'System Info': 'System Info'
+    'Dashboard': 'Dashboard', 'Cloud Status & Users': 'System Info', 'Master G-Sheets Export': 'System Info'
 }
 
-if selected_item in ['Master Data', 'HR & Payroll', 'Purchase', 'Sales', 'Inventory', 'Finance', 'Logistics & Ops']:
+if selected_item in ['Master Data', 'HR & Payroll', 'Purchase', 'Sales', 'Inventory', 'Finance', 'Logistics & Ops', 'System Info']:
     defaults = {
         'Master Data': 'Vendor Onboarding', 'HR & Payroll': 'Employee Master', 'Purchase': 'Create PO', 
-        'Sales': 'Create Sales Order', 'Inventory': 'Live Stock', 'Finance': 'Add Payment', 'Logistics & Ops': 'Add PO/SO Expenses'
+        'Sales': 'Create Sales Order', 'Inventory': 'Live Stock', 'Finance': 'Add Payment', 'Logistics & Ops': 'Add PO/SO Expenses', 'System Info': 'Cloud Status & Users'
     }
-    sub_menu = defaults[selected_item]
+    sub_menu = defaults.get(selected_item, selected_item)
     main_menu = selected_item
 else:
     main_menu = parent_map.get(selected_item, selected_item)
@@ -1214,6 +1219,51 @@ elif main_menu == "Finance":
         payments_df = pd.read_sql_query('SELECT id, txn_date as "Date", party_type as "Type", order_no as "Order Ref", amount as "Amount (Rs)", payment_mode as "Mode", utr_number as "UTR" FROM payments ORDER BY id DESC', conn)
         show_data_with_delete("payments", payments_df, "PAY-")
         conn.close()
+        
+    elif sub_menu == "Investor Planning & ROI":
+        st.header("👔 Corporate Strategy & Investor Planning")
+        st.write("Forecast cash runway and estimate ROI for major capital expenditures.")
+        
+        conn = get_db_connection()
+        total_rev = float(pd.read_sql_query("SELECT COALESCE(SUM(total_amount), 0) FROM so_master", conn).iloc[0,0])
+        total_cogs = float(pd.read_sql_query("SELECT COALESCE(SUM(total_amount), 0) FROM po_master", conn).iloc[0,0])
+        total_expenses = float(pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM order_expenses", conn).iloc[0,0])
+        monthly_payroll = float(pd.read_sql_query("SELECT COALESCE(SUM(salary_per_day), 0) * 30 FROM employees WHERE status='Active'", conn).iloc[0,0])
+        conn.close()
+        
+        monthly_burn_estimate = total_expenses + monthly_payroll
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("### 💸 Cash Runway Calculator")
+            st.info(f"**Current Estimated Monthly Burn:** ₹{monthly_burn_estimate:,.2f}")
+            cash_in_bank = st.number_input("Current Cash in Bank (Rs)", min_value=0.0, step=10000.0, value=500000.0)
+            
+            if monthly_burn_estimate > 0:
+                runway_months = cash_in_bank / monthly_burn_estimate
+                st.metric("Estimated Runway", f"{runway_months:.1f} Months")
+                if runway_months < 3:
+                    st.error("⚠️ Danger: Runway is under 3 months. Prepare to raise capital or cut burn immediately.")
+                elif runway_months < 6:
+                    st.warning("⚠️ Warning: Runway is under 6 months. Begin fundraising talks.")
+                else:
+                    st.success("✅ Safe: You have over 6 months of operational runway.")
+            else:
+                st.write("Not enough expense data to calculate burn rate.")
+                
+        with c2:
+            st.markdown("### 🚜 CapEx ROI Calculator")
+            st.write("Evaluate purchasing new delivery trucks, cold storage, or farm land.")
+            capex_cost = st.number_input("Total Investment Cost (Rs)", min_value=0.0, step=50000.0)
+            expected_monthly_return = st.number_input("Expected Monthly Savings/Revenue (Rs)", min_value=0.0, step=5000.0)
+            
+            if st.button("Calculate Payback Period"):
+                if expected_monthly_return > 0:
+                    payback_months = capex_cost / expected_monthly_return
+                    st.metric("Asset Payback Period", f"{payback_months:.1f} Months")
+                    st.write(f"This asset will break even in roughly **{payback_months/12:.1f} years**.")
+                else:
+                    st.error("Please enter an expected monthly return > 0.")
 
 # ==========================================
 # 6. LOGISTICS, EXPENSES & OPS
@@ -1515,28 +1565,61 @@ elif main_menu == "Dashboard":
     conn.close()
 
 elif main_menu == "System Info":
-    st.header("⚙️ User Management & Cloud Status")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("☁️ Database Connection")
-        st.success("✅ Connected securely to Neon Cloud Database (PostgreSQL).")
-        st.info("💡 Automatic Cloud Backups are active.")
-        
-    with col2:
-        st.subheader("👥 Add Team Members")
-        with st.form("new_user_form"):
-            new_email = st.text_input("New User Email")
-            new_pass = st.text_input("Password", type="password")
-            new_role = st.selectbox("Role", ["Sales", "Purchase", "Admin"])
+    
+    if sub_menu == "Cloud Status & Users":
+        st.header("⚙️ User Management & Cloud Status")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("☁️ Database Connection")
+            st.success("✅ Connected securely to Neon Cloud Database (PostgreSQL).")
+            st.info("💡 Automatic Cloud Backups are active.")
             
-            if st.form_submit_button("Create User"):
+        with col2:
+            st.subheader("👥 Add Team Members")
+            with st.form("new_user_form"):
+                new_email = st.text_input("New User Email")
+                new_pass = st.text_input("Password", type="password")
+                new_role = st.selectbox("Role", ["Sales", "Purchase", "Admin"])
+                
+                if st.form_submit_button("Create User"):
+                    conn = get_db_connection()
+                    c = conn.cursor()
+                    try:
+                        c.execute("INSERT INTO users (email, password, role) VALUES (%s, %s, %s)", (str(new_email), str(new_pass), str(new_role)))
+                        conn.commit()
+                        st.success(f"User {new_email} created successfully!")
+                    except psycopg2.IntegrityError:
+                        conn.rollback() 
+                        st.error("This email already exists!")
+                    conn.close()
+                    
+    elif sub_menu == "Master G-Sheets Export":
+        st.header("📊 Master Database Export (For Google Sheets)")
+        st.write("Clicking the button below will securely reach into the cloud and package your entire ERP database into a single, multi-tabbed spreadsheet.")
+        st.info("💡 **How to use this with Google Sheets:** Download the file, drag and drop it into your Google Drive, and open it. It will instantly convert into a live Google Sheet with all your tabs automatically separated at the bottom (Sales, Inventory, HR, etc.) so you can build pivot tables and custom charts!")
+        
+        if st.button("📦 Generate Full Master Spreadsheet", type="primary", use_container_width=True):
+            with st.spinner("Compiling entire database into multi-tab spreadsheet..."):
                 conn = get_db_connection()
-                c = conn.cursor()
-                try:
-                    c.execute("INSERT INTO users (email, password, role) VALUES (%s, %s, %s)", (str(new_email), str(new_pass), str(new_role)))
-                    conn.commit()
-                    st.success(f"User {new_email} created successfully!")
-                except psycopg2.IntegrityError:
-                    conn.rollback() 
-                    st.error("This email already exists!")
+                excel_buffer = io.BytesIO()
+                
+                # Fetching all tables to write to separate sheets
+                with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                    pd.read_sql_query("SELECT * FROM so_master s JOIN clients c ON s.client_id = c.id", conn).to_excel(writer, sheet_name='Sales Orders', index=False)
+                    pd.read_sql_query("SELECT * FROM po_master p JOIN vendors v ON p.vendor_id = v.id", conn).to_excel(writer, sheet_name='Purchase Orders', index=False)
+                    pd.read_sql_query("SELECT * FROM inventory_ledger", conn).to_excel(writer, sheet_name='Inventory Ledger', index=False)
+                    pd.read_sql_query("SELECT * FROM order_expenses", conn).to_excel(writer, sheet_name='Order Expenses', index=False)
+                    pd.read_sql_query("SELECT * FROM logistics", conn).to_excel(writer, sheet_name='Logistics & Dispatch', index=False)
+                    pd.read_sql_query("SELECT * FROM payments", conn).to_excel(writer, sheet_name='Payments & Finance', index=False)
+                    pd.read_sql_query("SELECT * FROM employees", conn).to_excel(writer, sheet_name='HR & Payroll', index=False)
+                    pd.read_sql_query("SELECT * FROM facilities", conn).to_excel(writer, sheet_name='Facilities', index=False)
+                    pd.read_sql_query("SELECT id, name, category, default_price FROM products", conn).to_excel(writer, sheet_name='Product Master', index=False)
+                
                 conn.close()
+                st.success("✅ Spreadsheet Generated Successfully!")
+                st.download_button(
+                    label="📥 Download Excel File (Ready for Google Sheets)", 
+                    data=excel_buffer.getvalue(), 
+                    file_name=f"Kamadhenu_Master_Backup_{datetime.date.today()}.xlsx", 
+                    mime="application/vnd.ms-excel"
+                )
