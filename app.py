@@ -3,7 +3,9 @@ import pandas as pd
 import psycopg2
 import time
 import datetime
+import platform
 import warnings
+import streamlit.components.v1 as components
 import plotly.express as px
 import streamlit_antd_components as sac
 from database import init_db
@@ -12,10 +14,9 @@ warnings.filterwarnings('ignore')
 
 init_db()
 
-def get_db_connection(): 
-    return psycopg2.connect(st.secrets["DATABASE_URL"])
+def get_db_connection(): return psycopg2.connect(st.secrets["DATABASE_URL"])
 
-# Dynamic Schema Migration
+# Auto-update database tables dynamically
 try:
     conn = get_db_connection()
     c = conn.cursor()
@@ -61,6 +62,17 @@ try:
             qty NUMERIC,
             reason TEXT,
             log_date DATE
+        );
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS transporters (
+            id SERIAL PRIMARY KEY,
+            agency_name VARCHAR(200),
+            driver_name VARCHAR(100),
+            contact VARCHAR(50),
+            vehicle_no VARCHAR(50),
+            rate_type VARCHAR(50),
+            rate_amount NUMERIC
         );
     """)
     conn.commit()
@@ -149,7 +161,8 @@ with st.sidebar:
                 sac.MenuItem('Vendor Onboarding', icon='person-plus'),
                 sac.MenuItem('Client Onboarding', icon='person-badge'),
                 sac.MenuItem('Product Master', icon='box'),
-                sac.MenuItem('Facility Onboarding', icon='building')
+                sac.MenuItem('Facility Onboarding', icon='building'),
+                sac.MenuItem('Transporter Onboarding', icon='truck')
             ]),
             sac.MenuItem('HR & Payroll', icon='people', children=[
                 sac.MenuItem('Employee Master', icon='person-vcard')
@@ -195,7 +208,7 @@ with st.sidebar:
     selected_item = sac.menu(menu_items, format_func='title', open_all=False, size='md', variant='filled', color='#2e7d32')
 
 parent_map = {
-    'Vendor Onboarding': 'Master Data', 'Client Onboarding': 'Master Data', 'Product Master': 'Master Data', 'Facility Onboarding': 'Master Data',
+    'Vendor Onboarding': 'Master Data', 'Client Onboarding': 'Master Data', 'Product Master': 'Master Data', 'Facility Onboarding': 'Master Data', 'Transporter Onboarding': 'Master Data',
     'Employee Master': 'HR & Payroll',
     'Create PO': 'Purchase', 'PO Records & GRN': 'Purchase', 'View Purchase Orders': 'Purchase', 'Purchase Forecasting': 'Purchase',
     'Create Sales Order': 'Sales', 'Sales Records & Tracking': 'Sales', 'View Sales Orders': 'Sales',
@@ -358,6 +371,41 @@ if main_menu == "Master Data":
         st.subheader("Product List")
         conn = get_db_connection()
         show_data_with_delete("products", pd.read_sql_query("SELECT id, name, category, default_price FROM products", conn), "SKU")
+        conn.close()
+
+    elif sub_menu == "Transporter Onboarding":
+        st.header("🚚 Transporter & Fleet Master")
+        st.write("Onboard your logistics partners, fleet vehicles, and drivers to automate dispatch costs.")
+        with st.form("transporter_form"):
+            c1, c2 = st.columns(2)
+            t_agency = c1.text_input("Transport Agency / Owner Name *")
+            t_driver = c2.text_input("Driver Name *")
+            t_contact = c1.text_input("Contact Number")
+            t_vehicle = c2.text_input("Vehicle Number (e.g., KA-01-AB-1234) *")
+            
+            st.markdown("### Billing Structure")
+            c3, c4 = st.columns(2)
+            t_rate_type = c3.selectbox("Rate Type", ["Per KM", "Fixed Trip Cost"])
+            t_rate_amt = c4.number_input("Rate Amount (Rs) *", min_value=0.0, step=10.0)
+            
+            if st.form_submit_button("Save Transporter"):
+                if t_agency and t_driver and t_vehicle and t_rate_amt > 0:
+                    conn = get_db_connection()
+                    c = conn.cursor()
+                    c.execute("INSERT INTO transporters (agency_name, driver_name, contact, vehicle_no, rate_type, rate_amount) VALUES (%s, %s, %s, %s, %s, %s)", 
+                              (str(t_agency), str(t_driver), str(t_contact), str(t_vehicle), str(t_rate_type), float(t_rate_amt)))
+                    conn.commit()
+                    conn.close()
+                    st.success("Transporter securely saved!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Please fill all mandatory (*) fields and ensure Rate is greater than 0.")
+                    
+        st.subheader("Registered Fleet")
+        conn = get_db_connection()
+        t_df = pd.read_sql_query('SELECT id, agency_name as "Agency", driver_name as "Driver", vehicle_no as "Vehicle No", rate_type as "Billing", rate_amount as "Rate (Rs)" FROM transporters', conn)
+        show_data_with_delete("transporters", t_df, "TR-")
         conn.close()
 
 # ==========================================
@@ -933,7 +981,7 @@ elif main_menu == "Inventory":
         conn.close()
 
 # ==========================================
-# 5. FINANCE MODULE
+# 5. FINANCE MODULE (AGING REPORT)
 # ==========================================
 elif main_menu == "Finance":
     
@@ -1224,6 +1272,8 @@ elif main_menu == "Logistics & Ops":
         st.header("🚚 Add Dispatch Details")
         channel = st.radio("Select Channel", ["Purchase (Inbound Pick up)", "Sales (Outbound Dispatch)"])
         conn = get_db_connection()
+        transporters = pd.read_sql_query("SELECT id, agency_name, driver_name, vehicle_no, rate_type, rate_amount FROM transporters", conn)
+        
         if "Purchase" in channel: 
             orders_query = "SELECT p.po_number as order_no, p.po_date as o_date, v.name as party_name FROM po_master p JOIN vendors v ON p.vendor_id = v.id ORDER BY p.po_id DESC"
         else: 
@@ -1233,28 +1283,41 @@ elif main_menu == "Logistics & Ops":
         
         if orders_df.empty: 
             st.warning(f"No orders found for {channel}.")
+        elif transporters.empty:
+            st.warning("⚠️ No Transporters found. Please add vehicles in Master Data -> Transporter Onboarding first.")
         else:
             with st.form("logistics_form"):
                 col1, col2 = st.columns(2)
                 order_dict = {row['order_no']: f"{row['order_no']} | {row['party_name']} | {row['o_date']}" for _, row in orders_df.iterrows()}
                 order_ref = col1.selectbox("Select Order Reference", options=list(order_dict.keys()), format_func=lambda x: order_dict[x])
                 
-                driver_name = col2.text_input("Driver Name")
-                vehicle_no = col1.text_input("Vehicle Number (e.g., KA-01-AB-1234) *")
-                from_loc = col2.text_input("From Location *")
-                to_loc = col1.text_input("To (Destination) *")
-                dist = col2.number_input("Distance (KM)", min_value=0.0, step=1.0)
-                freight = col1.number_input("Total Freight Cost (Rs)", min_value=0.0, step=100.0)
-                if st.form_submit_button("💾 Save Logistics Details"):
-                    if vehicle_no and from_loc and to_loc:
+                t_dict = {row['id']: f"{row['vehicle_no']} | {row['driver_name']} ({row['agency_name']}) - {row['rate_type']} @ ₹{row['rate_amount']}" for _, row in transporters.iterrows()}
+                selected_transporter_id = col2.selectbox("Select Fleet Vehicle", options=list(t_dict.keys()), format_func=lambda x: t_dict[x])
+                
+                from_loc = col1.text_input("From Location *")
+                to_loc = col2.text_input("To (Destination) *")
+                dist = col1.number_input("Distance (KM) *", min_value=1.0, step=1.0)
+                
+                if st.form_submit_button("💾 Calculate Freight & Save Dispatch"):
+                    if from_loc and to_loc and dist > 0:
+                        t_row = transporters[transporters['id'] == selected_transporter_id].iloc[0]
+                        driver_name = t_row['driver_name']
+                        vehicle_no = t_row['vehicle_no']
+                        
+                        if t_row['rate_type'] == 'Per KM':
+                            freight = float(dist * t_row['rate_amount'])
+                        else:
+                            freight = float(t_row['rate_amount'])
+                        
                         c = conn.cursor()
-                        c.execute("INSERT INTO logistics (order_ref, from_loc, to_loc, vehicle_no, driver_name, distance_km, freight_cost) VALUES (%s, %s, %s, %s, %s, %s, %s)", (str(order_ref), str(from_loc), str(to_loc), str(vehicle_no), str(driver_name), float(dist), float(freight)))
+                        c.execute("INSERT INTO logistics (order_ref, from_loc, to_loc, vehicle_no, driver_name, distance_km, freight_cost) VALUES (%s, %s, %s, %s, %s, %s, %s)", 
+                                  (str(order_ref), str(from_loc), str(to_loc), str(vehicle_no), str(driver_name), float(dist), float(freight)))
                         conn.commit()
-                        st.success(f"✅ Logistics details saved for {order_ref}!")
-                        time.sleep(1.2)
+                        st.success(f"✅ Dispatch saved! Freight auto-calculated to ₹{freight:,.2f} for {dist} KM.")
+                        time.sleep(2)
                         st.rerun()
                     else: 
-                        st.error("Vehicle No, From, and To locations are mandatory.")
+                        st.error("Distance, From, and To locations are mandatory.")
         conn.close()
         
     elif sub_menu == "Route & Freight Report":
