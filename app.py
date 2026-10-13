@@ -3,9 +3,7 @@ import pandas as pd
 import psycopg2
 import time
 import datetime
-import platform
 import warnings
-import streamlit.components.v1 as components
 import plotly.express as px
 import streamlit_antd_components as sac
 from database import init_db
@@ -14,9 +12,10 @@ warnings.filterwarnings('ignore')
 
 init_db()
 
-def get_db_connection(): return psycopg2.connect(st.secrets["DATABASE_URL"])
+def get_db_connection(): 
+    return psycopg2.connect(st.secrets["DATABASE_URL"])
 
-# Auto-update database tables dynamically
+# Dynamic Schema Migration
 try:
     conn = get_db_connection()
     c = conn.cursor()
@@ -83,10 +82,10 @@ def recalculate_order_totals(order_type, order_id):
     conn.commit()
     conn.close()
 
-st.set_page_config(page_title="Company ERP", layout="wide")
+st.set_page_config(page_title="Kamadhenufreshfarm ERP", layout="wide")
 
 # ==========================================
-# LOGIN SYSTEM
+# AUTHENTICATION
 # ==========================================
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -126,14 +125,14 @@ if not st.session_state.logged_in:
                 st.session_state.user_email = email
                 st.session_state.user_role = result[0]
                 st.balloons()  
-                time.sleep(1.5) 
+                time.sleep(1.2) 
                 st.rerun()
             else:
-                st.error("Invalid Email or Password. Please try again.")
+                st.error("Invalid Email or Password.")
     st.stop()
 
 # ==========================================
-# MAIN ERP APP (ANT DESIGN NAVIGATION)
+# NAVIGATION
 # ==========================================
 with st.sidebar:
     st.title(f"Welcome, {st.session_state.user_role}")
@@ -207,7 +206,10 @@ parent_map = {
 }
 
 if selected_item in ['Master Data', 'HR & Payroll', 'Purchase', 'Sales', 'Inventory', 'Finance', 'Logistics & Ops']:
-    defaults = {'Master Data': 'Vendor Onboarding', 'HR & Payroll': 'Employee Master', 'Purchase': 'Create PO', 'Sales': 'Create Sales Order', 'Inventory': 'Live Stock', 'Finance': 'Add Payment', 'Logistics & Ops': 'Add PO/SO Expenses'}
+    defaults = {
+        'Master Data': 'Vendor Onboarding', 'HR & Payroll': 'Employee Master', 'Purchase': 'Create PO', 
+        'Sales': 'Create Sales Order', 'Inventory': 'Live Stock', 'Finance': 'Add Payment', 'Logistics & Ops': 'Add PO/SO Expenses'
+    }
     sub_menu = defaults[selected_item]
     main_menu = selected_item
 else:
@@ -229,8 +231,10 @@ def show_data_with_delete(table_name, df, id_prefix):
     for index, row in df.iterrows():
         row_cols = st.columns(layout)
         for i, col_name in enumerate(cols):
-            if col_name == "id": row_cols[i].write(f"{id_prefix}{int(row[col_name]):03d}")
-            else: row_cols[i].write(row[col_name])
+            if col_name == "id": 
+                row_cols[i].write(f"{id_prefix}{int(row[col_name]):03d}")
+            else: 
+                row_cols[i].write(row[col_name])
         if st.session_state.user_role == "Admin":
             if row_cols[-1].button("🗑️ Delete", key=f"del_{table_name}_{row['id']}"):
                 conn = get_db_connection()
@@ -273,12 +277,14 @@ if main_menu == "Master Data":
                     file_data = psycopg2.Binary(v_file.read()) if v_file else None
                     conn = get_db_connection()
                     c = conn.cursor()
-                    c.execute("INSERT INTO vendors (name, contact, address, gstin, pan, payment_terms, bank_account, ifsc_code, passbook_file) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", 
-                              (str(v_name), str(v_contact), str(v_address), str(v_gstin), str(v_pan), str(v_terms), str(bank_acc1), str(v_ifsc), file_data))
+                    c.execute("""
+                        INSERT INTO vendors (name, contact, address, gstin, pan, payment_terms, bank_account, ifsc_code, passbook_file) 
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (str(v_name), str(v_contact), str(v_address), str(v_gstin), str(v_pan), str(v_terms), str(bank_acc1), str(v_ifsc), file_data))
                     conn.commit()
                     conn.close()
                     st.success("Vendor and Bank details securely saved!")
-                    time.sleep(1.5)
+                    time.sleep(1.2)
                     st.rerun()
                     
         st.subheader("Registered Vendors")
@@ -290,7 +296,7 @@ if main_menu == "Master Data":
         st.header("🏢 Facility Master")
         with st.form("facility_form"):
             c1, c2 = st.columns(2)
-            f_name = c1.text_input("Facility Name * (e.g. HSR Hub, Farm 1)")
+            f_name = c1.text_input("Facility Name *")
             f_type = c2.selectbox("Facility Type", ["Warehouse", "Processing Unit", "Cold Storage", "Retail Outlet", "Farm", "Other"])
             f_loc = st.text_area("Full Location Address *")
             if st.form_submit_button("Save Facility"):
@@ -390,14 +396,16 @@ elif main_menu == "HR & Payroll":
 elif main_menu == "Purchase":
     if sub_menu == "Create PO":
         st.header("Punch Purchase Order")
-        if 'po_cart' not in st.session_state: st.session_state.po_cart = []
+        if 'po_cart' not in st.session_state: 
+            st.session_state.po_cart = []
         conn = get_db_connection()
         vendors = pd.read_sql_query("SELECT id, name FROM vendors", conn)
         products = pd.read_sql_query("SELECT id, name, tax_rate FROM products", conn)
         facilities = pd.read_sql_query("SELECT id, name FROM facilities", conn)
         conn.close()
         
-        if vendors.empty or products.empty: st.warning("⚠️ Please add Master Data first.")
+        if vendors.empty or products.empty: 
+            st.warning("⚠️ Please add Master Data first.")
         else:
             col1, col2, col3 = st.columns(3)
             vendor_dict = {row['id']: f"V{int(row['id']):03d} - {row['name']}" for _, row in vendors.iterrows()}
@@ -500,7 +508,7 @@ elif main_menu == "Purchase":
                                       (new_grn, str(selected_po), prod_id))
                             conn.commit()
                             recalculate_order_totals('PO', po_id)
-                            st.success(f"Updated! Rate set to ₹{new_rate:.2f}, Total: ₹{item_total:,.2f}")
+                            st.success(f"Updated! Rate: ₹{new_rate:.2f}, Total: ₹{item_total:,.2f}")
                             time.sleep(1)
                             st.rerun()
                             
@@ -510,7 +518,7 @@ elif main_menu == "Purchase":
                             c.execute("DELETE FROM inventory_ledger WHERE ref_type = 'Purchase' AND ref_id = %s AND product_id = %s", (str(selected_po), prod_id))
                             conn.commit()
                             recalculate_order_totals('PO', po_id)
-                            st.warning("Item completely deleted from PO and Inventory!")
+                            st.warning("Item deleted from PO and Inventory!")
                             time.sleep(1)
                             st.rerun()
         conn.close()
@@ -570,8 +578,6 @@ elif main_menu == "Purchase":
         
     elif sub_menu == "Purchase Forecasting":
         st.header("🔮 Purchase Forecasting & Demand Analysis")
-        st.write("This engine analyzes historical order velocities and client ordering patterns to predict 7-day purchasing needs and daily demand breakdown.")
-        
         conn = get_db_connection()
         thirty_days_ago = str(datetime.date.today() - datetime.timedelta(days=30))
         
@@ -601,14 +607,14 @@ elif main_menu == "Purchase":
             WHERE COALESCE(sd.total_sold, 0) > 0 OR COALESCE(st.current_stock, 0) > 0
             ORDER BY "Suggested Order Qty" DESC
         """
-        
         forecast_df = pd.read_sql_query(forecast_query, conn)
         
         if forecast_df.empty:
             st.info("Not enough sales data in the last 30 days to generate a forecast.")
         else:
             def highlight_orders(val):
-                if val > 0: return 'background-color: #ffebee; color: #c62828; font-weight: bold'
+                if val > 0: 
+                    return 'background-color: #ffebee; color: #c62828; font-weight: bold'
                 return 'background-color: #e8f5e9; color: #2e7d32'
                 
             styled_df = forecast_df.style.map(highlight_orders, subset=["Suggested Order Qty"])
@@ -616,7 +622,6 @@ elif main_menu == "Purchase":
             
             st.divider()
             st.subheader("📅 Client & SKU Wise Day-of-Week Forecast (Mon - Sun)")
-            st.caption("Average quantity ordered per day based on historical purchasing patterns across specific weekdays.")
             
             daywise_query = """
                 SELECT 
@@ -660,12 +665,13 @@ elif main_menu == "Purchase":
         conn.close()
 
 # ==========================================
-# 3. SALES MODULE (BATCH TRACKING ENABLED)
+# 3. SALES MODULE
 # ==========================================
 elif main_menu == "Sales":
     if sub_menu == "Create Sales Order":
         st.header("Punch Sales Order (From Specific PO Batches)")
-        if 'so_cart' not in st.session_state: st.session_state.so_cart = []
+        if 'so_cart' not in st.session_state: 
+            st.session_state.so_cart = []
         conn = get_db_connection()
         clients = pd.read_sql_query("SELECT id, name FROM clients", conn)
         products = pd.read_sql_query("SELECT id, name, tax_rate, default_price FROM products", conn)
@@ -813,7 +819,7 @@ elif main_menu == "Sales":
                             c.execute("DELETE FROM inventory_ledger WHERE ref_type = 'Sale' AND ref_id = %s AND product_id = %s", (str(selected_so), prod_id))
                             conn.commit()
                             recalculate_order_totals('SO', so_id)
-                            st.warning("Item completely deleted from SO and Inventory!")
+                            st.warning("Item deleted from SO and Inventory!")
                             time.sleep(1)
                             st.rerun()
         conn.close()
@@ -922,11 +928,12 @@ elif main_menu == "Inventory":
         st.header("Inventory Ledger")
         conn = get_db_connection()
         ledger_df = pd.read_sql_query('SELECT i.txn_date as "Date", p.name as "Product", i.batch_no as "Batch Ref", i.ref_type as "Type", i.ref_id as "Reference", i.qty_in as "Qty IN", i.qty_out as "Qty OUT" FROM inventory_ledger i JOIN products p ON i.product_id = p.id ORDER BY i.ledger_id DESC', conn)
-        if not ledger_df.empty: st.dataframe(ledger_df, use_container_width=True, hide_index=True)
+        if not ledger_df.empty: 
+            st.dataframe(ledger_df, use_container_width=True, hide_index=True)
         conn.close()
 
 # ==========================================
-# 5. FINANCE MODULE (AGING REPORT)
+# 5. FINANCE MODULE
 # ==========================================
 elif main_menu == "Finance":
     
@@ -954,7 +961,8 @@ elif main_menu == "Finance":
             db_party_type = "Vendor"
             prefix = "V"
             
-        if parties.empty: st.warning(f"No {db_party_type}s found.")
+        if parties.empty: 
+            st.warning(f"No {db_party_type}s found.")
         else:
             party_dict = {row['id']: f"{prefix}{int(row['id']):03d} - {row['name']}" for _, row in parties.iterrows()}
             selected_party = st.selectbox("Select Party", options=list(party_dict.keys()), format_func=lambda x: party_dict[x])
@@ -982,9 +990,10 @@ elif main_menu == "Finance":
                         c.execute("INSERT INTO payments (party_type, party_id, order_no, amount, payment_mode, utr_number, txn_date, notes) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", (str(db_party_type), int(selected_party), str(selected_order), float(amount), str(pay_mode), str(utr_no), str(pay_date), str(notes)))
                         conn.commit()
                         st.success(f"✅ SUCCESS! Payment of Rs {amount} saved for {selected_order}.")
-                        time.sleep(1.5)
+                        time.sleep(1.2)
                         st.rerun()
-                    else: st.error("UTR / Reference number is required for Bank/UPI transactions.")
+                    else: 
+                        st.error("UTR / Reference number is required for Bank/UPI transactions.")
         conn.close()
                     
     elif sub_menu == "Receivables (Client Bills)":
@@ -1013,7 +1022,6 @@ elif main_menu == "Finance":
             
             st.divider()
             st.subheader("✏️ Manage Payments & Orders")
-            st.write("Edit or delete existing payments below. To edit the actual Bill Amount, go to **Sales -> Sales Records & Tracking**.")
             
             selected_so = st.selectbox("Select Sales Order to Manage Payments", df['Sales Order'].tolist())
             if selected_so:
@@ -1029,7 +1037,6 @@ elif main_menu == "Finance":
                             st.write(f"**Payment Date:** {row['txn_date']} | **Mode:** {row['payment_mode']}")
                             c1, c2, c3 = st.columns([2, 1, 1])
                             new_amt = c1.number_input("Paid Amount (Rs)", value=float(row['amount']), step=100.0, key=f"amt_{pay_id}")
-                            
                             save_btn = c2.form_submit_button("💾 Update")
                             del_btn = c3.form_submit_button("🗑️ Delete")
                             
@@ -1049,9 +1056,8 @@ elif main_menu == "Finance":
                                 time.sleep(1)
                                 st.rerun()
                                 
-                st.markdown("<br>", unsafe_allow_html=True)
                 with st.expander("⚠️ Danger Zone: Delete Entire Order"):
-                    st.warning(f"This will permanently delete {selected_so}, including all its items, inventory ledgers, and payments.")
+                    st.warning(f"Permanently remove {selected_so} and associated ledger entries.")
                     if st.button("🗑️ Confirm Delete Order", key=f"del_so_{selected_so}"):
                         c = conn.cursor()
                         c.execute("SELECT so_id FROM so_master WHERE so_number = %s", (selected_so,))
@@ -1065,10 +1071,11 @@ elif main_menu == "Finance":
                             c.execute("DELETE FROM payments WHERE order_no = %s", (selected_so,))
                             c.execute("DELETE FROM so_master WHERE so_id = %s", (so_id_del,))
                             conn.commit()
-                            st.success(f"{selected_so} completely deleted!")
-                            time.sleep(1.5)
+                            st.success(f"{selected_so} deleted completely!")
+                            time.sleep(1.2)
                             st.rerun()
-        else: st.info("No Sales Orders found.")
+        else: 
+            st.info("No Sales Orders found.")
         conn.close()
             
     elif sub_menu == "Payables (Vendor Bills)":
@@ -1097,7 +1104,6 @@ elif main_menu == "Finance":
             
             st.divider()
             st.subheader("✏️ Manage Payments & Orders")
-            st.write("Edit or delete existing payments below. To edit the actual Bill Amount, go to **Purchase -> PO Records & GRN**.")
             
             selected_po = st.selectbox("Select Purchase Order to Manage Payments", df['Purchase Order'].tolist())
             if selected_po:
@@ -1113,7 +1119,6 @@ elif main_menu == "Finance":
                             st.write(f"**Payment Date:** {row['txn_date']} | **Mode:** {row['payment_mode']}")
                             c1, c2, c3 = st.columns([2, 1, 1])
                             new_amt = c1.number_input("Paid Amount (Rs)", value=float(row['amount']), step=100.0, key=f"amt_{pay_id}")
-                            
                             save_btn = c2.form_submit_button("💾 Update")
                             del_btn = c3.form_submit_button("🗑️ Delete")
                             
@@ -1133,9 +1138,8 @@ elif main_menu == "Finance":
                                 time.sleep(1)
                                 st.rerun()
                                 
-                st.markdown("<br>", unsafe_allow_html=True)
                 with st.expander("⚠️ Danger Zone: Delete Entire Order"):
-                    st.warning(f"This will permanently delete {selected_po}, including all its items, inventory ledgers, and payments.")
+                    st.warning(f"Permanently remove {selected_po} and associated ledger entries.")
                     if st.button("🗑️ Confirm Delete Order", key=f"del_po_{selected_po}"):
                         c = conn.cursor()
                         c.execute("SELECT po_id FROM po_master WHERE po_number = %s", (selected_po,))
@@ -1149,10 +1153,11 @@ elif main_menu == "Finance":
                             c.execute("DELETE FROM payments WHERE order_no = %s", (selected_po,))
                             c.execute("DELETE FROM po_master WHERE po_id = %s", (po_id_del,))
                             conn.commit()
-                            st.success(f"{selected_po} completely deleted!")
-                            time.sleep(1.5)
+                            st.success(f"{selected_po} deleted completely!")
+                            time.sleep(1.2)
                             st.rerun()
-        else: st.info("No Purchase Orders found.")
+        else: 
+            st.info("No Purchase Orders found.")
         conn.close()
 
     elif sub_menu == "Payment Records":
@@ -1168,8 +1173,6 @@ elif main_menu == "Finance":
 elif main_menu == "Logistics & Ops":
     if sub_menu == "Add PO/SO Expenses":
         st.header("💸 Add Order-Level Expenses")
-        st.write("Add logistics, labour, and packaging costs directly to a specific Purchase Order or Sales Order.")
-        
         conn = get_db_connection()
         channel = st.radio("Select Order Type", ["Purchase Orders (PO)", "Sales Orders (SO)"])
         
@@ -1180,7 +1183,8 @@ elif main_menu == "Logistics & Ops":
             
         orders_df = pd.read_sql_query(orders_query, conn)
         
-        if orders_df.empty: st.warning("No orders found. Create an order first.")
+        if orders_df.empty: 
+            st.warning("No orders found. Create an order first.")
         else:
             with st.form("expense_form"):
                 col1, col2 = st.columns(2)
@@ -1209,8 +1213,8 @@ elif main_menu == "Logistics & Ops":
                         
                     if added:
                         conn.commit()
-                        st.success("✅ Expenses successfully attached to Order!")
-                        time.sleep(1.5)
+                        st.success("✅ Expenses attached to Order!")
+                        time.sleep(1.2)
                         st.rerun()
                     else: 
                         st.error("Please enter an amount greater than 0.")
@@ -1227,7 +1231,8 @@ elif main_menu == "Logistics & Ops":
         
         orders_df = pd.read_sql_query(orders_query, conn)
         
-        if orders_df.empty: st.warning(f"No orders found for {channel}. Create an order first.")
+        if orders_df.empty: 
+            st.warning(f"No orders found for {channel}.")
         else:
             with st.form("logistics_form"):
                 col1, col2 = st.columns(2)
@@ -1239,16 +1244,17 @@ elif main_menu == "Logistics & Ops":
                 from_loc = col2.text_input("From Location *")
                 to_loc = col1.text_input("To (Destination) *")
                 dist = col2.number_input("Distance (KM)", min_value=0.0, step=1.0)
-                freight = col1.number_input("Total Freight Cost (Rs)", min_value=0.0, step=100.0, help="For records only. Add exact monetary deductions in 'Add PO/SO Expenses'.")
+                freight = col1.number_input("Total Freight Cost (Rs)", min_value=0.0, step=100.0)
                 if st.form_submit_button("💾 Save Logistics Details"):
                     if vehicle_no and from_loc and to_loc:
                         c = conn.cursor()
                         c.execute("INSERT INTO logistics (order_ref, from_loc, to_loc, vehicle_no, driver_name, distance_km, freight_cost) VALUES (%s, %s, %s, %s, %s, %s, %s)", (str(order_ref), str(from_loc), str(to_loc), str(vehicle_no), str(driver_name), float(dist), float(freight)))
                         conn.commit()
                         st.success(f"✅ Logistics details saved for {order_ref}!")
-                        time.sleep(1.5)
+                        time.sleep(1.2)
                         st.rerun()
-                    else: st.error("Vehicle No, From, and To locations are mandatory.")
+                    else: 
+                        st.error("Vehicle No, From, and To locations are mandatory.")
         conn.close()
         
     elif sub_menu == "Route & Freight Report":
@@ -1265,14 +1271,16 @@ elif main_menu == "Logistics & Ops":
                 freight = row['Freight (Rs)']
                 if order in all_qtys.index and freight > 0:
                     qty = all_qtys.loc[order, 'total_qty']
-                    if qty > 0: return round(freight / qty, 2)
+                    if qty > 0: 
+                        return round(freight / qty, 2)
                 return 0.0
             log_df['Cost per Kg/Crate (Rs)'] = log_df.apply(get_cost_per_kg, axis=1)
             st.dataframe(log_df, use_container_width=True, hide_index=True)
             st.subheader("Total Freight Spent by Route")
             route_summary = log_df.groupby('Route')['Freight (Rs)'].sum().reset_index()
             st.bar_chart(route_summary.set_index('Route'))
-        else: st.info("No logistics records found.")
+        else: 
+            st.info("No logistics records found.")
         conn.close()
 
 # ==========================================
@@ -1282,52 +1290,141 @@ elif main_menu == "Dashboard":
     st.header("📊 Executive Command Center")
     conn = get_db_connection()
     
-    # --- 1. THE NUMBER ONE INVESTOR TABLE ---
-    st.markdown("### 👔 Investor & Board Summary (Monthly Run-Rate)")
+    # 1. UNIT ECONOMICS & EBITDA WATERFALL
+    st.markdown("### 👔 Investor Unit Economics (CM1, CM2, CM3 & EBITDA)")
     
-    total_rev = pd.read_sql_query("SELECT COALESCE(SUM(total_amount), 0) FROM so_master", conn).iloc[0,0]
-    total_cogs = pd.read_sql_query("SELECT COALESCE(SUM(total_amount), 0) FROM po_master", conn).iloc[0,0]
+    total_rev = float(pd.read_sql_query("SELECT COALESCE(SUM(total_amount), 0) FROM so_master", conn).iloc[0,0])
+    total_cogs = float(pd.read_sql_query("SELECT COALESCE(SUM(total_amount), 0) FROM po_master", conn).iloc[0,0])
     
-    total_freight = pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM order_expenses WHERE expense_type='Freight'", conn).iloc[0,0]
-    total_labour = pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM order_expenses WHERE expense_type='Labour'", conn).iloc[0,0]
-    total_other = pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM order_expenses WHERE expense_type NOT IN ('Freight', 'Labour')", conn).iloc[0,0]
+    total_freight = float(pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM order_expenses WHERE expense_type='Freight'", conn).iloc[0,0])
+    total_labour = float(pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM order_expenses WHERE expense_type='Labour'", conn).iloc[0,0])
+    total_other_opex = float(pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM order_expenses WHERE expense_type NOT IN ('Freight', 'Labour')", conn).iloc[0,0])
     
-    monthly_payroll = pd.read_sql_query("SELECT COALESCE(SUM(salary_per_day), 0) * 30 FROM employees WHERE status='Active'", conn).iloc[0,0]
+    monthly_payroll = float(pd.read_sql_query("SELECT COALESCE(SUM(salary_per_day), 0) * 30 FROM employees WHERE status='Active'", conn).iloc[0,0])
     
-    total_opex = float(total_freight) + float(total_labour) + float(total_other) + float(monthly_payroll)
-    net_profit = float(total_rev) - float(total_cogs) - total_opex
-    net_margin = (net_profit / float(total_rev) * 100) if float(total_rev) > 0 else 0.0
+    # Core Formulas
+    cm1 = total_rev - total_cogs
+    cm1_margin = (cm1 / total_rev * 100) if total_rev > 0 else 0.0
     
-    investor_df = pd.DataFrame([{
-        "Metric": "📈 Gross Revenue", "Value": f"₹ {float(total_rev):,.2f}"
-    }, {
-        "Metric": "🛒 Cost of Goods Sold (Purchases)", "Value": f"₹ {float(total_cogs):,.2f}"
-    }, {
-        "Metric": "🚛 Logistics & Freight Costs", "Value": f"₹ {float(total_freight):,.2f}"
-    }, {
-        "Metric": "🧑‍🌾 Labour Charges (Loading/Unloading)", "Value": f"₹ {float(total_labour):,.2f}"
-    }, {
-        "Metric": "🏢 Monthly Fixed Payroll (Active Employees x 30)", "Value": f"₹ {float(monthly_payroll):,.2f}"
-    }, {
-        "Metric": "💎 TRUE NET PROFIT", "Value": f"₹ {net_profit:,.2f}"
-    }])
-    st.dataframe(investor_df, use_container_width=True, hide_index=True)
-    st.caption(f"**True Net Margin (After Logistics, Labour & Payroll): {net_margin:.1f}%**")
+    cm2 = cm1 - (total_freight + total_labour)
+    cm2_margin = (cm2 / total_rev * 100) if total_rev > 0 else 0.0
+    
+    cm3 = cm2 - total_other_opex
+    cm3_margin = (cm3 / total_rev * 100) if total_rev > 0 else 0.0
+    
+    ebitda = cm3 - monthly_payroll
+    ebitda_margin = (ebitda / total_rev * 100) if total_rev > 0 else 0.0
+    
+    investor_metrics = [
+        {"Stage": "1. Gross Revenue", "Amount (Rs)": f"₹ {total_rev:,.2f}", "Margin %": "100.0%", "Description": "Total client invoice billing"},
+        {"Stage": "2. Cost of Goods Sold (Procurement)", "Amount (Rs)": f"₹ {total_cogs:,.2f}", "Margin %": f"{(total_cogs/total_rev*100) if total_rev > 0 else 0:.1f}%", "Description": "Total purchase costs from farm vendors"},
+        {"Stage": "🎯 CM1 (Gross Contribution Margin)", "Amount (Rs)": f"₹ {cm1:,.2f}", "Margin %": f"{cm1_margin:.1f}%", "Description": "Gross Revenue minus COGS"},
+        {"Stage": "3. Fulfillment (Logistics + Labour)", "Amount (Rs)": f"₹ {(total_freight + total_labour):,.2f}", "Margin %": f"{((total_freight + total_labour)/total_rev*100) if total_rev > 0 else 0:.1f}%", "Description": "Direct freight transport + Loading labour"},
+        {"Stage": "🎯 CM2 (Landed Contribution Margin)", "Amount (Rs)": f"₹ {cm2:,.2f}", "Margin %": f"{cm2_margin:.1f}%", "Description": "CM1 minus Direct Fulfillment Costs"},
+        {"Stage": "4. Other Operating Expenses", "Amount (Rs)": f"₹ {total_other_opex:,.2f}", "Margin %": f"{(total_other_opex/total_rev*100) if total_rev > 0 else 0:.1f}%", "Description": "Packaging materials, spoilage write-offs & tolls"},
+        {"Stage": "🎯 CM3 (Operating Contribution Margin)", "Amount (Rs)": f"₹ {cm3:,.2f}", "Margin %": f"{cm3_margin:.1f}%", "Description": "CM2 minus Other Variable Opex"},
+        {"Stage": "5. Fixed Payroll Burn (Monthly)", "Amount (Rs)": f"₹ {monthly_payroll:,.2f}", "Margin %": f"{(monthly_payroll/total_rev*100) if total_rev > 0 else 0:.1f}%", "Description": "Total daily employee wages x 30 days"},
+        {"Stage": "💎 EBITDA (Operating Cash Flow)", "Amount (Rs)": f"₹ {ebitda:,.2f}", "Margin %": f"{ebitda_margin:.1f}%", "Description": "CM3 minus Fixed Payroll Overhead"}
+    ]
+    
+    st.dataframe(pd.DataFrame(investor_metrics), use_container_width=True, hide_index=True)
+    
+    col_a, col_b, col_c, col_d = st.columns(4)
+    col_a.metric("CM1 Margin", f"{cm1_margin:.1f}%", delta=f"₹{cm1:,.0f}")
+    col_b.metric("CM2 Margin", f"{cm2_margin:.1f}%", delta=f"₹{cm2:,.0f}")
+    col_c.metric("CM3 Margin", f"{cm3_margin:.1f}%", delta=f"₹{cm3:,.0f}")
+    col_d.metric("EBITDA Margin", f"{ebitda_margin:.1f}%", delta=f"₹{ebitda:,.0f}")
+    
     st.divider()
 
-    # --- 2. ALERTS PANEL ---
+    # 2. CLIENT-WISE & SKU-WISE MARGIN TABLES
+    st.subheader("📑 Client-Wise & SKU-Wise Margin Breakdown")
+    tab1, tab2 = st.tabs(["Client-Wise Margins", "SKU-Wise Margins"])
+    
+    with tab1:
+        client_query = """
+            WITH client_sales AS (
+                SELECT s.client_id, SUM(s.total_amount) as rev, SUM(COALESCE(oe.amount, 0)) as exp
+                FROM so_master s
+                LEFT JOIN order_expenses oe ON s.so_number = oe.order_ref
+                GROUP BY s.client_id
+            ),
+            client_cogs AS (
+                SELECT s.client_id, SUM(i.qty * COALESCE(pi.rate, 0)) as cogs
+                FROM so_items i
+                JOIN so_master s ON i.so_id = s.so_id
+                LEFT JOIN (
+                    SELECT product_id, CASE WHEN SUM(qty) > 0 THEN SUM(total)/SUM(qty) ELSE 0 END as rate
+                    FROM po_items GROUP BY product_id
+                ) pi ON i.product_id = pi.product_id
+                GROUP BY s.client_id
+            )
+            SELECT 
+                c.name as "Client",
+                ROUND(CAST(COALESCE(cs.rev, 0) AS NUMERIC), 2) as "Revenue (Rs)",
+                ROUND(CAST(COALESCE(cc.cogs, 0) AS NUMERIC), 2) as "COGS (Rs)",
+                ROUND(CAST(COALESCE(cs.rev, 0) - COALESCE(cc.cogs, 0) AS NUMERIC), 2) as "CM1 (Rs)",
+                ROUND(CAST(CASE WHEN COALESCE(cs.rev, 0) > 0 THEN ((COALESCE(cs.rev, 0) - COALESCE(cc.cogs, 0)) / COALESCE(cs.rev, 0)) * 100 ELSE 0 END AS NUMERIC), 1) as "CM1 Margin %",
+                ROUND(CAST(COALESCE(cs.exp, 0) AS NUMERIC), 2) as "Fulfillment (Rs)",
+                ROUND(CAST((COALESCE(cs.rev, 0) - COALESCE(cc.cogs, 0)) - COALESCE(cs.exp, 0) AS NUMERIC), 2) as "CM2 (Rs)",
+                ROUND(CAST(CASE WHEN COALESCE(cs.rev, 0) > 0 THEN (((COALESCE(cs.rev, 0) - COALESCE(cc.cogs, 0)) - COALESCE(cs.exp, 0)) / COALESCE(cs.rev, 0)) * 100 ELSE 0 END AS NUMERIC), 1) as "CM2 Margin %"
+            FROM clients c
+            LEFT JOIN client_sales cs ON c.id = cs.client_id
+            LEFT JOIN client_cogs cc ON c.id = cc.client_id
+            WHERE COALESCE(cs.rev, 0) > 0
+            ORDER BY "Revenue (Rs)" DESC
+        """
+        client_df = pd.read_sql_query(client_query, conn)
+        if not client_df.empty:
+            st.dataframe(client_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("Punch Sales Orders to view Client Margins.")
+            
+    with tab2:
+        sku_query = """
+            WITH prod_sales AS (
+                SELECT product_id, SUM(total) as rev, SUM(qty) as vol
+                FROM so_items GROUP BY product_id
+            ),
+            prod_cogs AS (
+                SELECT product_id, CASE WHEN SUM(qty) > 0 THEN SUM(total)/SUM(qty) ELSE 0 END as avg_purchase_rate
+                FROM po_items GROUP BY product_id
+            )
+            SELECT 
+                p.name as "Product",
+                ROUND(CAST(COALESCE(ps.vol, 0) AS NUMERIC), 2) as "Units Sold",
+                ROUND(CAST(COALESCE(ps.rev, 0) AS NUMERIC), 2) as "Revenue (Rs)",
+                ROUND(CAST(COALESCE(ps.vol, 0) * COALESCE(pc.avg_purchase_rate, 0) AS NUMERIC), 2) as "COGS (Rs)",
+                ROUND(CAST(COALESCE(ps.rev, 0) - (COALESCE(ps.vol, 0) * COALESCE(pc.avg_purchase_rate, 0)) AS NUMERIC), 2) as "CM1 (Rs)",
+                ROUND(CAST(CASE WHEN COALESCE(ps.rev, 0) > 0 THEN ((COALESCE(ps.rev, 0) - (COALESCE(ps.vol, 0) * COALESCE(pc.avg_purchase_rate, 0))) / COALESCE(ps.rev, 0)) * 100 ELSE 0 END AS NUMERIC), 1) as "CM1 Margin %"
+            FROM products p
+            LEFT JOIN prod_sales ps ON p.id = ps.product_id
+            LEFT JOIN prod_cogs pc ON p.id = pc.product_id
+            WHERE COALESCE(ps.rev, 0) > 0
+            ORDER BY "Revenue (Rs)" DESC
+        """
+        sku_df = pd.read_sql_query(sku_query, conn)
+        if not sku_df.empty:
+            st.dataframe(sku_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("Punch Sales Orders to view SKU Margins.")
+
+    st.divider()
+
+    # 3. OPERATIONAL METRICS & ALERTS
     st.subheader("🚨 System Alerts")
     stock_df = pd.read_sql_query('SELECT p.id as product_id, p.name, COALESCE(SUM(i.qty_in), 0) - COALESCE(SUM(i.qty_out), 0) as current_stock, p.default_price FROM products p LEFT JOIN inventory_ledger i ON p.id = i.product_id GROUP BY p.id, p.name, p.default_price', conn)
     low_stock = stock_df[stock_df['current_stock'] < 50]
-    if not low_stock.empty: st.warning(f"**Low Stock Alert:** {', '.join(low_stock['name'].tolist())} inventory is running below optimal levels.")
-    else: st.success("✅ All inventory levels are optimal. No active incidents.")
+    if not low_stock.empty: 
+        st.warning(f"**Low Stock Alert:** {', '.join(low_stock['name'].tolist())} inventory is running below optimal levels.")
+    else: 
+        st.success("✅ All inventory levels are optimal. No active incidents.")
 
-    # --- 3. KPI CARDS ---
     st.subheader("🎯 Operational Indicators")
     total_received = pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM payments WHERE party_type='Client'", conn).iloc[0,0]
     total_paid = pd.read_sql_query("SELECT COALESCE(SUM(amount), 0) FROM payments WHERE party_type='Vendor'", conn).iloc[0,0]
-    pending_receivables = float(total_rev) - float(total_received)
-    pending_payables = float(total_cogs) - float(total_paid)
+    pending_receivables = total_rev - float(total_received)
+    pending_payables = total_cogs - float(total_paid)
     
     total_sku_count = stock_df[stock_df['current_stock'] > 0]['current_stock'].sum()
     stock_df['total_value'] = stock_df['current_stock'] * stock_df['default_price']
@@ -1339,7 +1436,7 @@ elif main_menu == "Dashboard":
     r2c3.metric("Pending Payables (To Vendors)", f"₹{pending_payables:,.2f}")
     r2c4.metric("Pending SKU (Inventory)", f"{total_sku_count:,.0f} Units")
 
-    # --- 4. CHARTS (DONUT & BAR) ---
+    # 4. CHARTS
     st.divider()
     c1, c2 = st.columns(2)
     sales_by_client = pd.read_sql_query('SELECT c.name as "Client", SUM(s.total_amount) as "Total" FROM so_master s JOIN clients c ON s.client_id = c.id GROUP BY c.name', conn)
@@ -1356,16 +1453,14 @@ elif main_menu == "Dashboard":
 
 elif main_menu == "System Info":
     st.header("⚙️ User Management & Cloud Status")
-    
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("☁️ Database Connection")
         st.success("✅ Connected securely to Neon Cloud Database (PostgreSQL).")
-        st.info("💡 Automatic Cloud Backups are active. No manual files needed!")
+        st.info("💡 Automatic Cloud Backups are active.")
         
     with col2:
         st.subheader("👥 Add Team Members")
-        st.write("Create logins for your field team so they can access the cloud app.")
         with st.form("new_user_form"):
             new_email = st.text_input("New User Email")
             new_pass = st.text_input("Password", type="password")
