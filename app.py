@@ -932,13 +932,13 @@ elif main_menu == "Finance":
     
     def style_aging_row(row):
         if row['Balance (Rs)'] <= 0.01:
-            style = 'background-color: #e8f5e9; color: #2e7d32' # Green (Paid)
+            style = 'background-color: #e8f5e9; color: #2e7d32' 
         elif row['Days Outstanding'] > 30:
-            style = 'background-color: #ffebee; color: #c62828' # Red (30+ Days)
+            style = 'background-color: #ffebee; color: #c62828' 
         elif row['Days Outstanding'] > 15:
-            style = 'background-color: #fff3e0; color: #e65100' # Orange (15+ Days)
+            style = 'background-color: #fff3e0; color: #e65100' 
         else:
-            style = '' # Normal
+            style = '' 
         return [style] * len(row)
 
     if sub_menu == "Add Payment":
@@ -997,7 +997,6 @@ elif main_menu == "Finance":
             df['Balance (Rs)'] = (df['Bill Amount (Rs)'] - df['Paid Amount (Rs)']).astype(float).round(2)
             df['Status'] = df['Balance (Rs)'].apply(lambda x: '✅ Paid' if x <= 0.01 else '⏳ Pending')
             
-            # Aging Calculation
             today = pd.Timestamp(datetime.date.today())
             df['Days Outstanding'] = (today - pd.to_datetime(df['Date'])).dt.days
             
@@ -1008,6 +1007,67 @@ elif main_menu == "Finance":
             
             styled_df = df.style.apply(style_aging_row, axis=1)
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button(label="📥 Download Aging Report as CSV", data=csv, file_name="Client_Receivables.csv", mime="text/csv", type="primary")
+            
+            st.divider()
+            st.subheader("✏️ Manage Payments & Orders")
+            st.write("Edit or delete existing payments below. To edit the actual Bill Amount, go to **Sales -> Sales Records & Tracking**.")
+            
+            selected_so = st.selectbox("Select Sales Order to Manage Payments", df['Sales Order'].tolist())
+            if selected_so:
+                pay_query = "SELECT id, txn_date, payment_mode, amount FROM payments WHERE order_no = %s"
+                pay_df = pd.read_sql_query(pay_query, conn, params=[selected_so])
+                
+                if pay_df.empty:
+                    st.info(f"No payments found for {selected_so}.")
+                else:
+                    for idx, row in pay_df.iterrows():
+                        pay_id = row['id']
+                        with st.form(key=f"rec_pay_{pay_id}"):
+                            st.write(f"**Payment Date:** {row['txn_date']} | **Mode:** {row['payment_mode']}")
+                            c1, c2, c3 = st.columns([2, 1, 1])
+                            new_amt = c1.number_input("Paid Amount (Rs)", value=float(row['amount']), step=100.0, key=f"amt_{pay_id}")
+                            
+                            save_btn = c2.form_submit_button("💾 Update")
+                            del_btn = c3.form_submit_button("🗑️ Delete")
+                            
+                            if save_btn:
+                                c = conn.cursor()
+                                c.execute("UPDATE payments SET amount = %s WHERE id = %s", (new_amt, pay_id))
+                                conn.commit()
+                                st.success("Payment Updated!")
+                                time.sleep(1)
+                                st.rerun()
+                                
+                            if del_btn:
+                                c = conn.cursor()
+                                c.execute("DELETE FROM payments WHERE id = %s", (pay_id,))
+                                conn.commit()
+                                st.warning("Payment Deleted!")
+                                time.sleep(1)
+                                st.rerun()
+                                
+                st.markdown("<br>", unsafe_allow_html=True)
+                with st.expander("⚠️ Danger Zone: Delete Entire Order"):
+                    st.warning(f"This will permanently delete {selected_so}, including all its items, inventory ledgers, and payments.")
+                    if st.button("🗑️ Confirm Delete Order", key=f"del_so_{selected_so}"):
+                        c = conn.cursor()
+                        c.execute("SELECT so_id FROM so_master WHERE so_number = %s", (selected_so,))
+                        res = c.fetchone()
+                        if res:
+                            so_id_del = res[0]
+                            c.execute("DELETE FROM so_items WHERE so_id = %s", (so_id_del,))
+                            c.execute("DELETE FROM inventory_ledger WHERE ref_type = 'Sale' AND ref_id = %s", (selected_so,))
+                            c.execute("DELETE FROM order_expenses WHERE order_ref = %s", (selected_so,))
+                            c.execute("DELETE FROM logistics WHERE order_ref = %s", (selected_so,))
+                            c.execute("DELETE FROM payments WHERE order_no = %s", (selected_so,))
+                            c.execute("DELETE FROM so_master WHERE so_id = %s", (so_id_del,))
+                            conn.commit()
+                            st.success(f"{selected_so} completely deleted!")
+                            time.sleep(1.5)
+                            st.rerun()
         else: st.info("No Sales Orders found.")
         conn.close()
             
@@ -1021,7 +1081,6 @@ elif main_menu == "Finance":
             df['Balance (Rs)'] = (df['Bill Amount (Rs)'] - df['Paid Amount (Rs)']).astype(float).round(2)
             df['Status'] = df['Balance (Rs)'].apply(lambda x: '✅ Paid' if x <= 0.01 else '⏳ Pending')
             
-            # Aging Calculation
             today = pd.Timestamp(datetime.date.today())
             df['Days Outstanding'] = (today - pd.to_datetime(df['Date'])).dt.days
             
@@ -1032,6 +1091,67 @@ elif main_menu == "Finance":
             
             styled_df = df.style.apply(style_aging_row, axis=1)
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button(label="📥 Download Aging Report as CSV", data=csv, file_name="Vendor_Payables.csv", mime="text/csv", type="primary")
+            
+            st.divider()
+            st.subheader("✏️ Manage Payments & Orders")
+            st.write("Edit or delete existing payments below. To edit the actual Bill Amount, go to **Purchase -> PO Records & GRN**.")
+            
+            selected_po = st.selectbox("Select Purchase Order to Manage Payments", df['Purchase Order'].tolist())
+            if selected_po:
+                pay_query = "SELECT id, txn_date, payment_mode, amount FROM payments WHERE order_no = %s"
+                pay_df = pd.read_sql_query(pay_query, conn, params=[selected_po])
+                
+                if pay_df.empty:
+                    st.info(f"No payments found for {selected_po}.")
+                else:
+                    for idx, row in pay_df.iterrows():
+                        pay_id = row['id']
+                        with st.form(key=f"pay_pay_{pay_id}"):
+                            st.write(f"**Payment Date:** {row['txn_date']} | **Mode:** {row['payment_mode']}")
+                            c1, c2, c3 = st.columns([2, 1, 1])
+                            new_amt = c1.number_input("Paid Amount (Rs)", value=float(row['amount']), step=100.0, key=f"amt_{pay_id}")
+                            
+                            save_btn = c2.form_submit_button("💾 Update")
+                            del_btn = c3.form_submit_button("🗑️ Delete")
+                            
+                            if save_btn:
+                                c = conn.cursor()
+                                c.execute("UPDATE payments SET amount = %s WHERE id = %s", (new_amt, pay_id))
+                                conn.commit()
+                                st.success("Payment Updated!")
+                                time.sleep(1)
+                                st.rerun()
+                                
+                            if del_btn:
+                                c = conn.cursor()
+                                c.execute("DELETE FROM payments WHERE id = %s", (pay_id,))
+                                conn.commit()
+                                st.warning("Payment Deleted!")
+                                time.sleep(1)
+                                st.rerun()
+                                
+                st.markdown("<br>", unsafe_allow_html=True)
+                with st.expander("⚠️ Danger Zone: Delete Entire Order"):
+                    st.warning(f"This will permanently delete {selected_po}, including all its items, inventory ledgers, and payments.")
+                    if st.button("🗑️ Confirm Delete Order", key=f"del_po_{selected_po}"):
+                        c = conn.cursor()
+                        c.execute("SELECT po_id FROM po_master WHERE po_number = %s", (selected_po,))
+                        res = c.fetchone()
+                        if res:
+                            po_id_del = res[0]
+                            c.execute("DELETE FROM po_items WHERE po_id = %s", (po_id_del,))
+                            c.execute("DELETE FROM inventory_ledger WHERE ref_type = 'Purchase' AND ref_id = %s", (selected_po,))
+                            c.execute("DELETE FROM order_expenses WHERE order_ref = %s", (selected_po,))
+                            c.execute("DELETE FROM logistics WHERE order_ref = %s", (selected_po,))
+                            c.execute("DELETE FROM payments WHERE order_no = %s", (selected_po,))
+                            c.execute("DELETE FROM po_master WHERE po_id = %s", (po_id_del,))
+                            conn.commit()
+                            st.success(f"{selected_po} completely deleted!")
+                            time.sleep(1.5)
+                            st.rerun()
         else: st.info("No Purchase Orders found.")
         conn.close()
 
